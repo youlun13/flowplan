@@ -4,8 +4,8 @@ import sys, os, shutil
 from playwright.sync_api import sync_playwright
 from PIL import Image
 
-name = sys.argv[1] if len(sys.argv) > 1 else "c"
-BG = (15, 110, 86, 255)
+name = sys.argv[1] if len(sys.argv) > 1 else "d1"
+BG = (255, 255, 255, 255)
 src = os.path.abspath(f"design/icon-{name}.svg")
 shutil.copy(src, "public/icon.svg")
 svg = open(src, encoding="utf-8").read()
