@@ -373,6 +373,16 @@ export async function deleteDemoData(): Promise<void> {
   });
 }
 
+/** 這台裝置除了示範資料之外什麼都沒有（登入既有帳號時用來判斷要不要直接以雲端為準） */
+export async function hasOnlyDemoData(): Promise<boolean> {
+  const [tasks, events, logs] = await Promise.all([
+    db.tasks.filter((t) => !t.isDemo).count(),
+    db.events.filter((e) => !e.isDemo).count(),
+    db.logs.filter((l) => !l.isDemo).count(),
+  ]);
+  return tasks + events + logs === 0;
+}
+
 export async function clearAllData(): Promise<void> {
   // 清空本機不應被當成「刪除」傳到雲端；用 ignoreTransaction 外的旗標由 sync engine 控制
   const { withoutSyncTracking } = await import('@/sync/engine');

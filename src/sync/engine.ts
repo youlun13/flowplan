@@ -306,14 +306,30 @@ export async function enqueueEverything(): Promise<number> {
   return n;
 }
 
-/** 以雲端為準：清空本機（設定除外）後套用遠端快照 */
-export async function replaceWithRemote(transport: SyncTransport): Promise<{ upserted: number; deleted: number; version: number }> {
+/** 雲端這個空間有沒有資料（登入既有帳號時決定：以雲端為準，還是把本機推上去） */
+export async function cloudHasData(transport: SyncTransport): Promise<boolean> {
+  const st = await transport.status();
+  if (!st.configured) return false;
+  return Object.values(st.counts ?? {}).reduce((s, n) => s + n, 0) > 0;
+}
+
+/**
+ * 以雲端為準：清空本機（設定除外）後套用遠端快照。
+ * preferRemoteSettings：設定也以雲端為準（只保留本機的 Worker 網址與通關密語）——
+ * 新裝置登入既有帳號時要用，否則剛建立的本機預設設定會因為 updatedAt 較新而蓋掉雲端的設定。
+ */
+export async function replaceWithRemote(transport: SyncTransport, opts: { preferRemoteSettings?: boolean } = {}): Promise<{ upserted: number; deleted: number; version: number }> {
   const r = await transport.pull(-1);
   if ('unchanged' in r && r.unchanged) return { upserted: 0, deleted: 0, version: r.version };
   const snapshot = (r as { snapshot: Snapshot }).snapshot;
   await withoutTracking(async () => {
-    await db.transaction('rw', [db.tasks, db.events, db.logs, db.dailyStates, db.workBlocks, db.planRevisions, db.syncQueue], async () => {
+    await db.transaction('rw', [db.tasks, db.events, db.logs, db.dailyStates, db.workBlocks, db.planRevisions, db.settings, db.syncQueue], async () => {
       await Promise.all([db.tasks.clear(), db.events.clear(), db.logs.clear(), db.dailyStates.clear(), db.workBlocks.clear(), db.planRevisions.clear(), db.syncQueue.clear()]);
+      const remoteSettings = snapshot.records?.settings?.default as unknown as Settings | undefined;
+      if (opts.preferRemoteSettings && remoteSettings) {
+        const local = (await db.settings.get('default')) as Settings | undefined;
+        await db.settings.put(mergeSettings(local, remoteSettings));
+      }
     });
   });
   const applied = await applySnapshot(snapshot);

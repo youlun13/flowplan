@@ -169,8 +169,11 @@ Cloudflare → Workers & Pages → flowplan-ai → Settings → Variables and Se
 
 1. 把對方的 Google email 加進 Worker 的 `ALLOWED_USERS`（和 Google Cloud 的測試使用者，若 App 還在測試中）→ Deploy。
 2. 傳給對方：`https://youlun13.github.io/flowplan/` 。Worker 網址已經內建在正式版裡（`.github/workflows/deploy.yml` 的 `VITE_FLOWPLAN_PROXY_URL`），對方不用填。
-3. 對方：設定 → 帳號 → 「用 Google 登入」→ 選帳號 → 回到 App 看到「已用 xxx 登入，同步已開啟」。第二台裝置同樣登入，資料就會合併。
-4. 示範資料也會進到對方自己的空間；對方可在設定 → 資料 → 「刪除示範資料」。
+3. 對方：設定 → 帳號 → 「用 Google 登入」→ 選帳號 → 回到 App 看到「已用 xxx 登入」。
+4. 登入後資料怎麼走（目標：不管哪台裝置，登入就是原本的）：
+   - 這個帳號第一次用（雲端空的）：這台裝置的資料（含示範資料）整包推上雲端，之後以它為本尊。
+   - 另一台裝置再登入（雲端已有資料）：那台若只有示範資料，示範資料直接清掉、設定也採雲端的，一登入就是原本的；那台若已有自己的資料，則與雲端合併。
+   - 示範資料不想要：設定 → 資料 → 「刪除示範資料」，會同步刪到所有裝置。
 5. 想停掉某個人：從 `ALLOWED_USERS` 拿掉 → Deploy；對方下次操作會看到「不在允許清單」，本機資料仍在，但不再同步也不能用 AI。想連雲端資料一起清：Cloudflare → KV → flowplan-sync → 刪掉 `u:google:<id>:snapshot` 那把 key。
 
 費用：每個人用 AI 都算在你的 Anthropic 額度；Haiku 5.5 一次解析約 US$0.001，一個人一天 20 次、一個月不到 US$1。Worker 的 `AI_DAILY_LIMIT_PER_USER` 與 Anthropic workspace 的 spend limit 仍是硬上限。

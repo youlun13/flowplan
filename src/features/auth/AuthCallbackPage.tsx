@@ -12,8 +12,8 @@ import { Button } from '@/components/ui';
 import { PageHeader } from '@/components/AppShell';
 import { LOGIN_ERROR_TEXT, proxyUrlOf, setSession, verifySessionToken, type MeResult } from '@/auth/session';
 import { DEFAULT_PROXY_URL } from '@/config';
-import { clearAllData, countAll, getSettings, updateSettings } from '@/db/repo';
-import { enqueueEverything, getSyncMeta, makeTransport, replaceWithRemote, resetSyncVersion, runSync, setSyncAccount } from '@/sync/engine';
+import { clearAllData, countAll, deleteDemoData, getSettings, hasOnlyDemoData, updateSettings } from '@/db/repo';
+import { cloudHasData, enqueueEverything, getSyncMeta, makeTransport, replaceWithRemote, resetSyncVersion, runSync, setSyncAccount } from '@/sync/engine';
 import { useToast } from '@/hooks/useToast';
 
 type Phase = { kind: 'working' } | { kind: 'error'; message: string } | { kind: 'switch'; me: MeResult; previous: string } | { kind: 'standalone-hint'; token: string };
@@ -30,7 +30,16 @@ export async function switchConflict(me: MeResult): Promise<string | null> {
   return c.tasks + c.events + c.logs > 0 ? (meta.accountEmail ?? meta.accountUid) : null;
 }
 
-/** 登入後把一切接起來；回傳給使用者看的訊息 */
+/**
+ * 登入後把一切接起來；回傳給使用者看的訊息。
+ *
+ * 目標：不管哪台裝置，登入同一個帳號就是原本的資料。三種情況：
+ *   a. 同一個帳號在這台裝置登入過 → 什麼都不動，繼續同步
+ *   b. 這台裝置第一次用這個帳號，雲端已有資料（例如第二台裝置）→ 以雲端為準：
+ *      本機只有示範資料就直接清掉、設定也採雲端的；本機有自己的資料則合併進雲端（設定保留本機）
+ *   c. 雲端是空的（這個帳號第一次用）→ 把本機資料（含示範）整包推上去，這台裝置就是起點
+ *   wipeLocal：換帳號時先清掉本機（上一個人的資料），再走 b
+ */
 export async function completeLogin(me: MeResult, opts: { wipeLocal: boolean; fetchImpl?: typeof fetch }): Promise<string> {
   const before = await getSettings();
   const meta = await getSyncMeta();
@@ -47,25 +56,40 @@ export async function completeLogin(me: MeResult, opts: { wipeLocal: boolean; fe
   if (!sameAccount) await resetSyncVersion();
   await setSyncAccount(me.uid, me.email);
 
+  let how: 'continue' | 'adopt-cloud' | 'merge' | 'seed-cloud' | 'no-sync' = 'no-sync';
+  if (me.features.sync) {
+    const transport = makeTransport(await getSettings(), opts.fetchImpl);
+    if (sameAccount && !opts.wipeLocal) {
+      how = 'continue';
+    } else if (await cloudHasData(transport)) {
+      if (opts.wipeLocal || (await hasOnlyDemoData())) {
+        // 新裝置（或剛清過）：雲端才是本尊。示範資料不推上去，設定採雲端的
+        await deleteDemoData();
+        await replaceWithRemote(transport, { preferRemoteSettings: true });
+        how = 'adopt-cloud';
+      } else {
+        await enqueueEverything();
+        how = 'merge';
+      }
+    } else {
+      await enqueueEverything();
+      how = 'seed-cloud';
+    }
+  }
+
   const current = await getSettings();
   await updateSettings({
     sync: { enabled: me.features.sync, auto: true },
     ai: { ...current.ai, enabled: me.features.ai ? true : current.ai.enabled, provider: me.features.ai ? 'claude' : current.ai.provider },
   });
-
-  if (me.features.sync) {
-    const settings = await getSettings();
-    if (opts.wipeLocal) {
-      await replaceWithRemote(makeTransport(settings, opts.fetchImpl));
-    } else if (!sameAccount) {
-      // 第一次用這個帳號在這台裝置登入：本機既有資料（含示範）全部排進第一次推送，與雲端合併
-      await enqueueEverything();
-    }
-    void runSync('登入');
-  }
+  if (me.features.sync) void runSync('登入');
 
   const parts = [`已用 ${me.email} 登入`];
-  parts.push(me.features.sync ? '同步已開啟' : 'Worker 還沒綁定 KV，暫時無法同步');
+  if (how === 'adopt-cloud') parts.push('已載入你雲端的資料');
+  else if (how === 'merge') parts.push('這台裝置的資料會與雲端合併');
+  else if (how === 'seed-cloud') parts.push('同步已開啟，這台裝置的資料會推上雲端');
+  else if (how === 'continue') parts.push('同步已開啟');
+  else parts.push('Worker 還沒綁定 KV，暫時無法同步');
   if (!me.features.ai) parts.push('Worker 沒有設定 AI 金鑰，AI 助手不可用');
   return parts.join('，');
 }
