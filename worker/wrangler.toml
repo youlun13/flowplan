@@ -1,0 +1,15 @@
+# Cloudflare Worker：FlowPlan 的 AI 代理（保管 Anthropic API key）
+# 用 CLI 部署：cd worker && npx wrangler deploy
+# 用 dashboard 部署：把 src/index.js 整個貼進 Worker 編輯器即可，不需要這個檔。
+name = "flowplan-ai"
+main = "src/index.js"
+compatibility_date = "2026-10-01"
+
+[vars]
+ALLOWED_ORIGINS = "https://youlun13.github.io"
+AI_MODEL = "claude-haiku-5-5"
+AI_MAX_OUTPUT_TOKENS = "1024"
+
+# Secrets（不要寫在這裡）：
+#   npx wrangler secret put ANTHROPIC_API_KEY
+#   npx wrangler secret put FLOWPLAN_PROXY_SECRET

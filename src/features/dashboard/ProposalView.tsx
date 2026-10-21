@@ -1,4 +1,5 @@
-import { AlertTriangle, ArrowRight, Minus, Plus, SkipForward } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, ArrowRight, Minus, Plus, SkipForward, Sparkles } from 'lucide-react';
 import { Button, Chip, cx } from '@/components/ui';
 import type { PlanProposal } from '@/engine/planner';
 import { deferTask } from '@/db/repo';
@@ -9,8 +10,22 @@ import { addLocalDays, formatDuration, formatTime } from '@/lib/time';
  * 重排方案的預覽：下一步、變更前後對照、完整排程、未安排項目、警示、理由。
  * 這裡只顯示；按「套用」才由呼叫端寫入。
  */
-export function ProposalView({ proposal, tz, onApply, onKeep, applying }: { proposal: PlanProposal; tz: string; onApply: () => void; onKeep: () => void; applying?: boolean }) {
+export function ProposalView({ proposal, tz, onApply, onKeep, applying, explain }: { proposal: PlanProposal; tz: string; onApply: () => void; onKeep: () => void; applying?: boolean; explain?: (p: PlanProposal) => Promise<string> }) {
   const toast = useToast();
+  const [explanation, setExplanation] = useState<string | null>(null);
+  const [explaining, setExplaining] = useState(false);
+
+  async function runExplain() {
+    if (!explain) return;
+    setExplaining(true);
+    try {
+      setExplanation(await explain(proposal));
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : 'AI 說明失敗', 'danger');
+    } finally {
+      setExplaining(false);
+    }
+  }
   const { diff, stats } = proposal;
   const hasChange = diff.added.length + diff.moved.length + diff.shortened.length + diff.removed.length > 0 || proposal.effects.createEvent || proposal.effects.completeTaskId || proposal.effects.setEnergy;
 
@@ -149,6 +164,19 @@ export function ProposalView({ proposal, tz, onApply, onKeep, applying }: { prop
           </ul>
         )}
       </section>
+
+      {/* AI 白話說明（可選） */}
+      {explain && (
+        <div className="rounded-lg border border-line px-3 py-2 text-sm">
+          {explanation ? (
+            <p>{explanation}</p>
+          ) : (
+            <button type="button" onClick={runExplain} disabled={explaining} className="flex items-center gap-1.5 text-accent disabled:opacity-50">
+              <Sparkles size={16} /> {explaining ? 'AI 整理中…' : '請 AI 用白話說明這個方案（算一次請求）'}
+            </button>
+          )}
+        </div>
+      )}
 
       {/* 理由 */}
       <details className="rounded-lg bg-surface-2/60 px-3 py-2 text-sm">

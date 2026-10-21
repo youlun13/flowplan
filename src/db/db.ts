@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { ActivityLog, CalendarEvent, DailyState, PlanRevision, Settings, Task, WorkBlock } from './schema';
+import type { ActivityLog, AiUsageDay, CalendarEvent, DailyState, PlanRevision, Settings, Task, WorkBlock } from './schema';
 
 export class FlowPlanDB extends Dexie {
   tasks!: Table<Task, string>;
@@ -9,6 +9,7 @@ export class FlowPlanDB extends Dexie {
   workBlocks!: Table<WorkBlock, string>;
   planRevisions!: Table<PlanRevision, string>;
   settings!: Table<Settings, string>;
+  aiUsage!: Table<AiUsageDay, string>;
 
   constructor(name = 'flowplan') {
     super(name);
@@ -23,6 +24,9 @@ export class FlowPlanDB extends Dexie {
     });
     this.version(2).stores({
       planRevisions: 'id, date, createdAt',
+    });
+    this.version(3).stores({
+      aiUsage: 'date',
     });
   }
 }

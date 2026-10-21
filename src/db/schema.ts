@@ -180,6 +180,10 @@ export const SettingsSchema = z.object({
     model: z.string().optional(),
     maxOutputTokens: z.number().int().min(128).max(8192),
     dailyLimit: z.number().int().min(0).max(1000),
+    /** Cloudflare Worker 網址，例如 https://flowplan-ai.xxx.workers.dev */
+    proxyUrl: z.string().max(300).optional(),
+    /** 通關密語（不是 API key）；只存在這台裝置，匯出備份時會略過 */
+    proxySecret: z.string().max(300).optional(),
   }),
   demoDataLoaded: z.boolean(),
   firstUsedAt: IsoDateTime.optional(),
@@ -204,13 +208,24 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     preferDeadlineFirst: true,
     energyMatching: true,
     allowSplitting: true,
-    ai: { enabled: false, provider: 'none', maxOutputTokens: 1024, dailyLimit: 30 },
+    ai: { enabled: false, provider: 'none', model: 'claude-haiku-5-5', maxOutputTokens: 1024, dailyLimit: 30 },
     demoDataLoaded: false,
     firstUsedAt: now,
     backupReminderDays: 7,
     updatedAt: now,
   };
 }
+
+/** 每日 AI 用量（只在本機） */
+export const AiUsageSchema = z.object({
+  date: LocalDateSchema,
+  calls: z.number().int().min(0),
+  inputTokens: z.number().int().min(0),
+  outputTokens: z.number().int().min(0),
+  costUsd: z.number().min(0),
+  updatedAt: IsoDateTime,
+});
+export type AiUsageDay = z.infer<typeof AiUsageSchema>;
 
 export const BACKUP_SCHEMA_VERSION = 1;
 

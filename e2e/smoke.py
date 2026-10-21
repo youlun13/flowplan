@@ -3,7 +3,7 @@
 用法：  npm run build && npm run preview -- --port 4173 &  ；  python3 e2e/smoke.py http://localhost:4173/
 對應驗收條件 1、2、3、4、10（無 AI key 時核心功能可用）。
 """
-import sys, re, datetime
+import sys, re, datetime, json
 from playwright.sync_api import sync_playwright, expect
 
 BASE = sys.argv[1] if len(sys.argv) > 1 else "http://localhost:4173/"
@@ -158,7 +158,7 @@ with sync_playwright() as p:
     # 臨時有事 15:00–17:00 之外再加一段，確認預覽顯示變更
     page.click("button:has-text('我遇到狀況了')")
     page.wait_for_selector("text=看看怎麼辦")
-    page.click("button:has-text('臨時有事')")
+    page.click("button[aria-pressed]:has-text('臨時有事')")
     page.locator("div[role='dialog'] input[type='time']").nth(0).fill("10:00")
     page.locator("div[role='dialog'] input[type='time']").nth(1).fill("12:00")
     page.fill("input[placeholder='臨時有事']", "E2E 臨時行程")
@@ -172,6 +172,101 @@ with sync_playwright() as p:
     page.click("button:has-text('撤銷')")
     page.wait_for_timeout(400)
     check("撤銷後臨時行程消失", page.locator("text=E2E 臨時行程").count() == 0)
+
+    # ---- 第三階段：假 Worker（驗收 9、10、12）----
+    WORKER = "https://fake-worker.test"
+    state = {"mode": "html"}
+    def worker_route(route, request):
+        cors = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, OPTIONS"}
+        if request.method == "OPTIONS":
+            return route.fulfill(status=204, headers=cors)
+        auth = request.headers.get("authorization")
+        if auth != "Bearer e2e-secret":
+            return route.fulfill(status=401, headers={**cors, "content-type": "application/json"}, body=json.dumps({"ok": False, "error": {"code": "unauthorized"}}))
+        if request.url.endswith("/v1/health"):
+            return route.fulfill(status=200, headers={**cors, "content-type": "application/json"}, body=json.dumps({"ok": True, "result": {"hasKey": True, "model": "claude-haiku-5-5"}}))
+        body = json.loads(request.post_data or "{}")
+        assert "x-api-key" not in json.dumps(request.headers).lower()
+        m = state["mode"]
+        if m == "html":
+            return route.fulfill(status=200, headers={**cors, "content-type": "text/html"}, body="<html>oops</html>")
+        if m == "ghost":
+            return route.fulfill(status=200, headers={**cors, "content-type": "application/json"}, body=json.dumps({"ok": True, "result": {"type": "task_done", "taskId": "ghost-id", "confidence": 0.9, "missing": [], "note": "假的"}, "usage": {"inputTokens": 10, "outputTokens": 5}, "model": "claude-haiku-5-5"}))
+        if m == "down":
+            return route.fulfill(status=503, headers={**cors, "content-type": "application/json"}, body=json.dumps({"ok": False, "error": {"code": "upstream_unavailable", "message": "overloaded"}}))
+        if m == "ok":
+            if body.get("op") == "explain_plan":
+                return route.fulfill(status=200, headers={**cors, "content-type": "application/json"}, body=json.dumps({"ok": True, "result": {"text": "先休息二十五分鐘再開始。"}, "usage": {"inputTokens": 300, "outputTokens": 20}, "model": "claude-haiku-5-5"}))
+            return route.fulfill(status=200, headers={**cors, "content-type": "application/json"}, body=json.dumps({"ok": True, "result": {"type": "rest", "minutes": 25, "confidence": 0.9, "missing": [], "note": "想先休息 25 分鐘"}, "usage": {"inputTokens": 800, "outputTokens": 40}, "model": "claude-haiku-5-5"}))
+        return route.fulfill(status=500, headers=cors, body="")
+    page.route(WORKER + "/**", worker_route)
+
+    # 無 AI 時規則解析可用（驗收 10）
+    page.click("a[href='#/']:visible")
+    page.wait_for_selector("text=下一步（")
+    page.click("button:has-text('我遇到狀況了')")
+    page.wait_for_selector("textarea[placeholder*='一句話']")
+    page.fill("textarea[placeholder*='一句話']", "我睡到十一點")
+    page.click("button:has-text('解析')")
+    page.wait_for_selector("text=理解到的狀態")
+    check("無 AI：規則解析出睡過頭", page.locator("div[role='dialog'] >> text=睡過頭").count() >= 1 and page.locator("div[role='dialog'] >> text=規則").count() >= 1)
+    page.click("button:has-text('正確，看看怎麼辦')")
+    page.wait_for_selector("text=套用後的今日排程")
+    check("規則解析的事件能直接進入預覽", page.locator("text=重排預覽 · 睡過頭").count() == 1)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
+
+    # 設定 AI（驗收 12：瀏覽器端只有通關密語）
+    page.click("a[href='#/settings']:visible")
+    page.wait_for_selector("text=每日時間")
+    page.click("div:has(> span:text('啟用 AI 助手')) >> nth=0") if False else page.click("button[role='switch']:has-text('啟用 AI 助手')")
+    page.fill("input[placeholder*='workers.dev']", WORKER)
+    page.fill("input[type='password']", "e2e-secret")
+    page.click("button:has-text('儲存設定')")
+    page.wait_for_timeout(300)
+    page.click("button:has-text('測試連線')")
+    page.wait_for_selector("text=連線成功")
+    check("測試連線經假 Worker 成功", True)
+
+    def ask(text):
+        page.click("a[href='#/']:visible")
+        page.wait_for_selector("text=下一步（")
+        page.click("button:has-text('我遇到狀況了')")
+        page.wait_for_selector("textarea[placeholder*='一句話']")
+        page.fill("textarea[placeholder*='一句話']", text)
+        page.click("button:has-text('解析')")
+        page.wait_for_selector("div[role='dialog'] >> text=/理解到的狀態|還缺一點資訊/")
+        page.wait_for_timeout(200)
+
+    state["mode"] = "html"
+    ask("報告剛剛交出去了耶")
+    check("驗收9 Worker 回非法 JSON → 顯示錯誤並退回規則", page.locator("text=不是有效的 JSON").count() >= 1)
+    page.keyboard.press("Escape"); page.wait_for_timeout(200)
+
+    state["mode"] = "ghost"
+    ask("報告剛剛交出去了耶")
+    check("驗收9 AI 虛構 task id → 拒絕", page.locator("text=指到的任務不存在").count() >= 1)
+    page.keyboard.press("Escape"); page.wait_for_timeout(200)
+
+    state["mode"] = "down"
+    ask("報告剛剛交出去了耶")
+    check("驗收9 API 失敗 → 可理解錯誤", page.locator("text=暫時無法服務").count() >= 1)
+    page.keyboard.press("Escape"); page.wait_for_timeout(200)
+
+    state["mode"] = "ok"
+    ask("報告剛剛交出去了耶")
+    check("AI 解析成功 → 顯示 AI 標記與理解", page.locator("div[role='dialog'] >> text=想先休息 25 分鐘").count() == 1 and page.locator("div[role='dialog'] >> text=AI").count() >= 1)
+    page.click("button:has-text('正確，看看怎麼辦')")
+    page.wait_for_selector("text=套用後的今日排程")
+    check("AI 事件進入規則引擎預覽", page.locator("text=先休息 25 分鐘").count() >= 1)
+    page.click("button:has-text('請 AI 用白話說明')")
+    page.wait_for_selector("text=先休息二十五分鐘再開始")
+    check("AI 白話說明", True)
+    page.keyboard.press("Escape"); page.wait_for_timeout(200)
+
+    page.click("a[href='#/settings']:visible")
+    page.wait_for_selector("text=每日時間")
+    check("設定頁顯示今日用量", page.locator("text=/今天 [2-9] 次/").count() == 1)
 
     # ---- 設定頁與匯出 ----
     page.click("a[href='#/settings']:visible")
@@ -187,6 +282,7 @@ with sync_playwright() as p:
     import json
     data = json.load(open(path))
     check("匯出 JSON 含任務與行程", data["app"] == "flowplan" and len(data["tasks"]) > 0 and len(data["events"]) > 0)
+    check("驗收12 匯出備份不含通關密語（更不含金鑰）", "e2e-secret" not in json.dumps(data) and data["settings"]["ai"].get("proxySecret") is None)
     page.screenshot(path=f"{SHOTS}/07-settings.png", full_page=True)
 
     # ---- 刪除示範資料 ----
@@ -205,7 +301,9 @@ with sync_playwright() as p:
     pg2.screenshot(path=f"{SHOTS}/08-desktop.png", full_page=True)
     ctx2.close()
 
-    check("沒有 console/page error", len(errors) == 0)
+    real_errors = [e for e in errors if "status of 503" not in e]  # 503 是我們故意讓假 Worker 回的
+    check("沒有 console/page error", len(real_errors) == 0)
+    errors = real_errors
     if errors:
         print("ERRORS:", errors[:5])
     browser.close()

@@ -11,6 +11,10 @@ import { formatDateTimeZh } from '@/lib/time';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { BookOpen } from 'lucide-react';
 import { HelpSheet } from './HelpSheet';
+import { DEFAULT_MODEL, MODEL_PRICING, formatUsd } from '@/ai/pricing';
+import { makeProvider } from '@/ai/resolve';
+import { getUsage, totalUsage } from '@/db/usage';
+import { todayLocal } from '@/lib/time';
 
 export function SettingsPage() {
   const settings = useSettings();
@@ -24,6 +28,28 @@ export function SettingsPage() {
   const [storage, setStorage] = useState<{ persisted?: boolean; usageMB?: number } | null>(null);
   const [copyText, setCopyText] = useState<string | null>(null);
   const [helpOpen, setHelpOpen] = useState(false);
+  const [showSecret, setShowSecret] = useState(false);
+  const [testing, setTesting] = useState(false);
+  const usageToday = useLiveQuery(() => getUsage(todayLocal(settings.timeZone)), [settings.timeZone]);
+  const usageTotal = useLiveQuery(() => totalUsage(), []);
+
+  const setAi = (patch: Partial<Settings['ai']>) => {
+    setDraft((d) => ({ ...d, ai: { ...d.ai, ...patch } }));
+    setDirty(true);
+  };
+
+  async function testConnection() {
+    setTesting(true);
+    try {
+      const provider = makeProvider({ ...draft, ai: { ...draft.ai } });
+      const h = await provider.health();
+      toast.show(h.hasKey ? `連線成功，Worker 模型：${h.model}` : '連線成功，但 Worker 還沒設定 ANTHROPIC_API_KEY', h.hasKey ? 'info' : 'danger');
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : '連線失敗', 'danger');
+    } finally {
+      setTesting(false);
+    }
+  }
   const fileRef = useRef<HTMLInputElement>(null);
   const demoCount = useLiveQuery(async () => (await db.tasks.filter((t) => Boolean(t.isDemo)).count()) + (await db.events.filter((e) => Boolean(e.isDemo)).count()), []) ?? 0;
   const counts = useLiveQuery(() => countAll(), []);
@@ -183,23 +209,60 @@ export function SettingsPage() {
 
       <section className="mt-4 rounded-xl border border-line bg-surface p-4">
         <h2 className="text-[15px] font-semibold">AI 助手</h2>
-        <p className="mt-0.5 text-xs text-muted">第三階段啟用。所有 AI 功能預設關閉；沒有 AI 時，日曆、任務、紀錄與規則引擎照常運作。金鑰永遠不會存在這個 App 裡。</p>
+        <p className="mt-0.5 text-xs text-muted">
+          把「用一句話描述狀況」交給 Claude 解析。關閉時一切照常：規則解析與表單永遠可用。金鑰只放在你的 Cloudflare Worker，這裡只存通關密語（備份時不會匯出）。設定步驟見 docs/API_SETUP.md。
+        </p>
         <div className="mt-2 divide-y divide-line">
-          <Toggle checked={false} onChange={() => toast.show('AI 助手將在第三階段提供')} label="啟用 AI 助手（第三階段）" />
+          <Toggle checked={draft.ai.enabled} onChange={(v) => setAi({ enabled: v, provider: v ? 'claude' : draft.ai.provider })} label="啟用 AI 助手" />
         </div>
-        <div className="mt-2 grid grid-cols-2 gap-3 opacity-60">
+        <div className="mt-2 grid grid-cols-2 gap-3">
           <Field label="供應商">
-            <Select value={draft.ai.provider} disabled>
+            <Select value={draft.ai.provider} onChange={(e) => setAi({ provider: e.target.value as Settings['ai']['provider'] })}>
               <option value="none">無</option>
               <option value="claude">Claude</option>
-              <option value="gemini">Gemini</option>
-              <option value="groq">Groq</option>
+              <option value="gemini" disabled>Gemini（之後）</option>
+              <option value="groq" disabled>Groq（之後）</option>
             </Select>
           </Field>
-          <Field label="每日請求上限">
-            <Input type="number" value={draft.ai.dailyLimit} disabled />
+          <Field label="模型">
+            <Select value={draft.ai.model ?? DEFAULT_MODEL} onChange={(e) => setAi({ model: e.target.value })}>
+              {Object.entries(MODEL_PRICING).map(([id, p]) => (
+                <option key={id} value={id}>
+                  {p.label}
+                </option>
+              ))}
+            </Select>
           </Field>
         </div>
+        <Field label="Worker 網址" className="mt-3">
+          <Input type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" placeholder="https://flowplan-ai.xxx.workers.dev" value={draft.ai.proxyUrl ?? ''} onChange={(e) => setAi({ proxyUrl: e.target.value.trim() })} />
+        </Field>
+        <Field label="通關密語" hint="和 Worker 的 FLOWPLAN_PROXY_SECRET 一樣；不是 Anthropic API key" className="mt-3">
+          <div className="flex gap-2">
+            <Input type={showSecret ? 'text' : 'password'} autoCapitalize="off" autoCorrect="off" value={draft.ai.proxySecret ?? ''} onChange={(e) => setAi({ proxySecret: e.target.value })} className="flex-1" />
+            <Button onClick={() => setShowSecret((v) => !v)} className="shrink-0">
+              {showSecret ? '隱藏' : '顯示'}
+            </Button>
+          </div>
+        </Field>
+        <div className="mt-3 grid grid-cols-2 gap-3">
+          <Field label="每日請求上限">
+            <Input type="number" inputMode="numeric" min={0} max={1000} value={draft.ai.dailyLimit} onChange={(e) => setAi({ dailyLimit: Number(e.target.value) })} />
+          </Field>
+          <Field label="單次最大輸出 token">
+            <Input type="number" inputMode="numeric" min={128} max={8192} step={128} value={draft.ai.maxOutputTokens} onChange={(e) => setAi({ maxOutputTokens: Number(e.target.value) })} />
+          </Field>
+        </div>
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button onClick={testConnection} disabled={testing || !draft.ai.proxyUrl || !draft.ai.proxySecret}>
+            {testing ? '測試中…' : '測試連線'}
+          </Button>
+          <span className="text-xs text-muted">
+            今天 {usageToday?.calls ?? 0} 次 · {((usageToday?.inputTokens ?? 0) + (usageToday?.outputTokens ?? 0)).toLocaleString()} token · 約 {formatUsd(usageToday?.costUsd ?? 0)}
+            {usageTotal && usageTotal.calls > 0 && ` · 累計 ${usageTotal.calls} 次 約 ${formatUsd(usageTotal.costUsd)}`}
+          </span>
+        </div>
+        <p className="mt-2 text-xs text-muted">費用為估算；真正的硬上限請在 Anthropic Console 的 FlowPlan workspace 設 spend limit。額度用完時 API 只會停止，不會扣款。</p>
       </section>
 
       <div className="sticky bottom-20 mt-4 md:bottom-4">

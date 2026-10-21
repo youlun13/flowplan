@@ -310,6 +310,9 @@ export function DashboardPage() {
         today={today}
         tz={tz}
         tasks={tasks}
+        occurrences={todayOcc}
+        settings={settings}
+        energy={daily?.energy}
         activeTaskId={running?.taskId}
         buildProposal={buildProposal}
         startWithReplan={incident?.replan}

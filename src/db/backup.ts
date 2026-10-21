@@ -27,7 +27,7 @@ export async function buildBackup(): Promise<Backup> {
     dailyStates,
     workBlocks,
     planRevisions,
-    settings,
+    settings: { ...settings, ai: { ...settings.ai, proxySecret: undefined } },
   };
 }
 

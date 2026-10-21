@@ -114,11 +114,11 @@ design/                          圖示候選（A 分流、B 現在線、C 節�
 
 因為 `base: './'` 與 Hash 路由，放在子路徑也能正常運作。其他免費靜態主機（Cloudflare Pages、Vercel）同樣只需 `npm run build` 後上傳 `dist/`；請以當期官方頁面確認免費額度。
 
-第三階段的 AI 代理需要一支伺服器端函式（Cloudflare Pages Functions 或 Vercel Functions）保管金鑰；到時再評估，任何需要付款資訊的步驟都會先列出等你確認。
+AI 代理是獨立的 Cloudflare Worker（`worker/`，免費方案、不需付款資訊），靜態網站留在 GitHub Pages；部署步驟見 `docs/API_SETUP.md` Part B。
 
 ## 環境變數
 
-第一階段不需要任何環境變數。`.env.example` 只列出第三階段會用到的變數名稱（`ANTHROPIC_API_KEY`、`FLOWPLAN_PROXY_SECRET`、每日上限等），永遠不要把真正的金鑰寫進 repo 或前端。
+前端不需要任何環境變數。`.env.example` 列出的是 Worker 端的變數名稱（`ANTHROPIC_API_KEY`、`FLOWPLAN_PROXY_SECRET`、`ALLOWED_ORIGINS`、`AI_MODEL`、`AI_MAX_OUTPUT_TOKENS`），設定在 Cloudflare Worker 的 Variables and Secrets；永遠不要把真正的金鑰寫進 repo 或前端。
 
 ## 已實作 / 未實作 / 如何驗證
 
@@ -135,17 +135,18 @@ design/                          圖示候選（A 分流、B 現在線、C 節�
 - PWA manifest 與圖示（可加入主畫面；離線快取為第四階段）
 - 深色模式（跟隨系統）
 - 第二階段：「我遇到狀況了」結構化表單（睡過頭 / 臨時有事 / 精力變化 / 提早完成 / 超時 / 需要休息 / 單純重排）、重排預覽（下一步、變更前後對照、完整排程、未安排與原因、判斷過程）、套用、撤銷最近一次、今日排程列表與時間軸區塊、區塊開始 / 跳過
+- 第三階段：自然語言輸入 → 規則解析 / AI 解析 → 「理解到的狀態」確認 → 預覽；Cloudflare Worker 代理與 Claude provider；AI 白話說明；設定頁 AI 區塊（啟用、Worker 網址、通關密語、模型、每日上限、測試連線、今日 / 累計用量與估計費用）；備份不匯出通關密語
 
 **未實作（照規格排在後面的階段）**
 
-- 第三階段：AI 自然語言解析與解說、provider adapter、代理與額度保護
+- 第三階段未做：Gemini / Groq provider（Worker 端預留 provider 切換，App 端選項先停用）
 - 第四階段：跨裝置同步、離線快取、統計、預估工時校正
 
 **如何驗證**
 
-- `npm test`：66 個單元測試，含驗收 1、2、3、5、6、7、8、11、13（跨午夜、夏令時間、空白 TODO、重疊）、14，以及驗收 9 的後端防線（驗證器拒絕虛構 id / 已完成任務 / 衝突）
-- `python3 e2e/smoke.py`：真實 Chromium 操作 17 項，含驗收 1–4、10、11（保留原計畫不寫入、套用後出現排程與撤銷、臨時行程套用與撤銷）
-- 驗收 9 的 AI 端（非法 JSON、API 失敗）與驗收 12 屬第三階段
+- `npm test`：96 個單元測試，含驗收 1、2、3、5、6、7、8、9（Worker 錯誤正規化、非法 JSON、結構不符、虛構 id、已完成任務）、10（AI 關閉 / 失敗 / 達上限都退回規則）、11、13（跨午夜、夏令時間、空白 TODO、重疊）、14
+- `python3 e2e/smoke.py`：真實 Chromium 操作 29 項，含驗收 1–4、9（假 Worker 回 HTML / 虛構 id / 503）、10、11、12（請求只帶通關密語；備份不含密語）
+- 真實 Anthropic 呼叫未在 CI 測（需要金鑰）；部署 Worker 後用設定頁「測試連線」與一次實際解析驗證
 
 ## 已知限制
 
@@ -158,7 +159,7 @@ design/                          圖示候選（A 分流、B 現在線、C 節�
 ## 可能產生成本的環節
 
 - 第一階段：**無**。沒有任何網路請求、沒有第三方服務。
-- 第三階段起：AI API 呼叫。設計上使用 Max 方案附帶的 API 額度，額度用完 API 只會停止，不會扣款；程式永遠不會開啟 auto-reload 或購買額度。
+- 第三階段（選用）：AI API 呼叫。使用 Max 方案附帶的 API 額度，額度用完 API 只會停止，不會扣款；程式永遠不會開啟 auto-reload 或購買額度。四道鎖：不綁卡 / 組織月上限 / workspace 月上限 / App 每日次數與 token 上限。Cloudflare Worker 免費方案每日 100,000 次請求，FlowPlan 用量遠低於此（以當期官方頁面為準）。
 
 ## 使用手冊
 
