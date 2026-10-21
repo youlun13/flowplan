@@ -9,6 +9,8 @@ import {
   SettingsSchema,
   TaskSchema,
   defaultSettings,
+  normalizeSettings,
+  settingsNeedsUpgrade,
   type ActivityLog,
   type CalendarEvent,
   type DailyState,
@@ -42,12 +44,14 @@ function firstIssue(err: unknown): string {
 export async function getSettings(): Promise<Settings> {
   const existing = await db.settings.get('default');
   if (existing) {
-    const parsed = SettingsSchema.safeParse(existing);
-    if (parsed.success) return parsed.data;
-    // 舊資料缺欄位：用預設值補齊後寫回
-    const merged = SettingsSchema.parse({ ...defaultSettings(), ...existing, updatedAt: nowIso() });
-    await db.settings.put(merged);
-    return merged;
+    const full = normalizeSettings(existing);
+    // 舊版本寫入的列缺新欄位（例如 sync）：補齊後寫回，live query 才會拿到完整的設定
+    if (settingsNeedsUpgrade(existing as unknown as Record<string, unknown>, full)) {
+      const upgraded = { ...full, updatedAt: nowIso() };
+      await db.settings.put(upgraded);
+      return upgraded;
+    }
+    return full;
   }
   const fresh = defaultSettings();
   await db.settings.put(fresh);

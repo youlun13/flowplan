@@ -165,3 +165,26 @@ describe('示範資料', () => {
     expect(await loadDemoDataIfEmpty(TPE)).toBe(false);
   });
 });
+
+describe('舊版設定列升級', () => {
+  it('第一階段寫入、沒有 sync / useCalibration 欄位的設定列：讀取時補齊並寫回，live query 也拿得到完整欄位', async () => {
+    const { normalizeSettings } = await import('@/db/schema');
+    const { getSettings } = await import('@/db/repo');
+    const { db } = await import('@/db/db');
+    const legacy = {
+      id: 'default', timeZone: 'Asia/Taipei', weekStartsOn: 1, workStart: '08:00', workEnd: '23:00', sleepStart: '00:00', sleepEnd: '07:30',
+      bufferMinutes: 10, breakMinutes: 10, focusMinutes: 45, preferDeadlineFirst: true, energyMatching: true, allowSplitting: true,
+      ai: { enabled: false, provider: 'none', maxOutputTokens: 1024, dailyLimit: 30 }, demoDataLoaded: true, backupReminderDays: 7, updatedAt: '2026-10-01T00:00:00.000Z',
+    };
+    await db.settings.put(legacy as never);
+    // live query 會拿到原始列：normalizeSettings 必須補出 sync
+    expect(normalizeSettings(legacy).sync).toEqual({ enabled: false, auto: true });
+    expect(normalizeSettings(legacy).useCalibration).toBe(true);
+    expect(normalizeSettings({ id: 'default', garbage: true }).workStart).toBe('08:00');
+    const s = await getSettings();
+    expect(s.sync).toEqual({ enabled: false, auto: true });
+    const row = (await db.settings.get('default')) as unknown as Record<string, unknown>;
+    expect(row.sync).toEqual({ enabled: false, auto: true });
+    expect(row.useCalibration).toBe(true);
+  });
+});

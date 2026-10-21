@@ -202,6 +202,22 @@ export const SettingsSchema = z.object({
 });
 export type Settings = z.infer<typeof SettingsSchema>;
 
+/**
+ * 把資料庫裡的設定列補齊成完整的 Settings：舊版本寫入的列可能缺新欄位（例如 sync、useCalibration），
+ * Zod 的 default 會補；完全壞掉就退回預設值。所有讀設定的地方（含 live query）都要經過這裡。
+ */
+export function normalizeSettings(row: unknown): Settings {
+  const parsed = SettingsSchema.safeParse(row);
+  if (parsed.success) return parsed.data;
+  const merged = SettingsSchema.safeParse({ ...defaultSettings(), ...(row && typeof row === 'object' ? (row as Record<string, unknown>) : {}), id: 'default' });
+  return merged.success ? merged.data : defaultSettings();
+}
+
+/** 資料庫那列是否缺了 schema 會補的欄位（需要寫回） */
+export function settingsNeedsUpgrade(row: Record<string, unknown>, full: Settings): boolean {
+  return Object.keys(full).some((k) => !(k in row));
+}
+
 export function defaultSettings(now = new Date().toISOString()): Settings {
   return {
     id: 'default',
