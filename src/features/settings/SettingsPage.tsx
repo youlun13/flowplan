@@ -9,6 +9,8 @@ import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { formatDateTimeZh } from '@/lib/time';
 import { useLiveQuery } from 'dexie-react-hooks';
+import { BookOpen } from 'lucide-react';
+import { HelpSheet } from './HelpSheet';
 
 export function SettingsPage() {
   const settings = useSettings();
@@ -21,6 +23,7 @@ export function SettingsPage() {
   const [importMode, setImportMode] = useState<ImportMode>('replace');
   const [storage, setStorage] = useState<{ persisted?: boolean; usageMB?: number } | null>(null);
   const [copyText, setCopyText] = useState<string | null>(null);
+  const [helpOpen, setHelpOpen] = useState(false);
   const fileRef = useRef<HTMLInputElement>(null);
   const demoCount = useLiveQuery(async () => (await db.tasks.filter((t) => Boolean(t.isDemo)).count()) + (await db.events.filter((e) => Boolean(e.isDemo)).count()), []) ?? 0;
   const counts = useLiveQuery(() => countAll(), []);
@@ -122,6 +125,15 @@ export function SettingsPage() {
     <div>
       <PageHeader title="設定" />
       <ErrorText>{error}</ErrorText>
+
+      <button type="button" onClick={() => setHelpOpen(true)} className="mt-2 flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left active:bg-surface-2">
+        <BookOpen size={20} className="shrink-0 text-accent" />
+        <span className="flex-1">
+          <span className="block text-[15px] font-semibold">使用說明</span>
+          <span className="block text-xs text-muted">每天怎麼用、狀況怎麼處理、欄位怎麼填、備份注意事項</span>
+        </span>
+        <span className="text-muted">›</span>
+      </button>
 
       <section className="mt-2 rounded-xl border border-line bg-surface p-4">
         <h2 className="text-[15px] font-semibold">每日時間</h2>
@@ -227,6 +239,7 @@ export function SettingsPage() {
 
       <p className="mt-6 text-center text-xs text-muted">FlowPlan 0.1 · 第一階段 · 本機優先，零額外付費</p>
 
+      <HelpSheet open={helpOpen} onClose={() => setHelpOpen(false)} />
       <Sheet open={copyText !== null} onClose={() => setCopyText(null)} title="手動複製備份">
         <p className="mb-2 text-sm text-muted">這個環境不允許自動複製或下載。全選下方文字後複製，貼到任何筆記或檔案保存。</p>
         <Textarea readOnly value={copyText ?? ''} rows={12} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />

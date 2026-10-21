@@ -176,6 +176,11 @@ with sync_playwright() as p:
     # ---- 設定頁與匯出 ----
     page.click("a[href='#/settings']:visible")
     page.wait_for_selector("text=每日時間")
+    page.click("button:has-text('使用說明')")
+    page.wait_for_selector("h2:has-text('使用說明')")
+    check("設定頁可開啟使用說明", page.locator("text=我遇到狀況了").count() >= 1)
+    page.keyboard.press("Escape")
+    page.wait_for_timeout(200)
     with page.expect_download() as dl:
         page.click("button:has-text('匯出 JSON 備份')")
     path = dl.value.path()
