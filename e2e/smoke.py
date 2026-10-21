@@ -29,9 +29,16 @@ with sync_playwright() as p:
     page.on("console", lambda m: errors.append(f"{m.text} @ {m.location.get('url','')}:{m.location.get('lineNumber','')}") if m.type == "error" else None)
 
     page.goto(BASE)
+    page.wait_for_selector("[data-testid='welcome-local']")
+    check("第一次打開：先看到歡迎畫面（登入 / 本機），不會直接塞示範資料", page.locator("text=下一步（").count() == 0)
+    page.screenshot(path=f"{SHOTS}/00-welcome.png", full_page=True)
+    page.click("[data-testid='welcome-local']")
     page.wait_for_selector("text=下一步（")
     page.screenshot(path=f"{SHOTS}/01-dashboard.png", full_page=True)
-    check("Dashboard 顯示示範資料的下一步", page.locator("text=複習線性代數").count() > 0)
+    check("選「先在這台裝置使用」後載入示範資料", page.locator("text=複習線性代數").count() > 0)
+    page.reload()
+    page.wait_for_selector("text=下一步（")
+    check("重新整理不會再出現歡迎畫面", page.locator("[data-testid='welcome-local']").count() == 0)
 
     # ---- 驗收 1：新增明天的 TODO，重新整理後仍存在 ----
     page.click("a[href='#/tasks']:visible")
@@ -417,6 +424,8 @@ with sync_playwright() as p:
     ctx2 = browser.new_context(viewport={"width": 1280, "height": 900}, locale="zh-TW", timezone_id="Asia/Taipei")
     pg2 = ctx2.new_page()
     pg2.goto(BASE)
+    pg2.wait_for_selector("[data-testid='welcome-local']")
+    pg2.click("[data-testid='welcome-local']")
     pg2.wait_for_selector("text=下一步（")
     pg2.screenshot(path=f"{SHOTS}/08-desktop.png", full_page=True)
     ctx2.close()

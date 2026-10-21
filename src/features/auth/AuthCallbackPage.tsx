@@ -79,6 +79,8 @@ export async function completeLogin(me: MeResult, opts: { wipeLocal: boolean; fe
 
   const current = await getSettings();
   await updateSettings({
+    onboarded: true,
+    demoDataLoaded: true, // 登入者永遠不會被塞示範資料
     sync: { enabled: me.features.sync, auto: true },
     ai: { ...current.ai, enabled: me.features.ai ? true : current.ai.enabled, provider: me.features.ai ? 'claude' : current.ai.provider },
   });

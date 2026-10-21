@@ -17,6 +17,8 @@ import { pickNextStep } from '@/engine/nextStep';
 import type { Occurrence } from '@/engine/recurrence';
 import { useEvents, useLogsForDate } from '@/hooks/useData';
 import { useNow } from '@/hooks/useNow';
+import { useSession } from '@/hooks/useSession';
+import { syncConfigured } from '@/sync/engine';
 import { usePlanner } from '@/hooks/usePlanner';
 import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
@@ -299,6 +301,7 @@ export function DashboardPage() {
         </div>
       </Section>
 
+      <ReloginReminder />
       <BackupReminder />
 
       <TaskForm open={creating} onClose={() => setCreating(false)} defaultDate={today} />
@@ -342,6 +345,22 @@ function OverdueRow({ task, today, tz, nowMs, onOpen }: { task: Task; today: str
           取消
         </button>
       </div>
+    </div>
+  );
+}
+
+/** 同步開著但憑證沒了（登入過期、被移出清單、登出後沒關同步）→ 提醒重新登入，資料不受影響 */
+function ReloginReminder() {
+  const settings = useSettings();
+  const session = useSession();
+  if (!settings.sync.enabled || session || syncConfigured(settings)) return null;
+  return (
+    <div className="mt-6 rounded-xl border border-warn/40 bg-warn-soft px-4 py-3 text-sm">
+      <div className="font-medium text-warn">同步已暫停：請重新登入</div>
+      <div className="mt-1 text-muted">這台裝置的資料都還在，但在重新登入之前不會與其他裝置同步，AI 助手也暫停。</div>
+      <Link to="/settings" className="mt-2 inline-block text-accent">
+        前往設定登入
+      </Link>
     </div>
   );
 }

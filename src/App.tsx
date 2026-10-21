@@ -1,9 +1,10 @@
 import { useEffect, useState } from 'react';
-import { HashRouter, Route, Routes } from 'react-router-dom';
+import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-dom';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { AppShell } from './components/AppShell';
 import { ToastProvider } from './hooks/useToast';
-import { getSettings } from './db/repo';
-import { loadDemoDataIfEmpty } from './db/seed';
+import { getSettings, hasOnlyDemoData } from './db/repo';
+import { WelcomePage } from './features/welcome/WelcomePage';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { CalendarPage } from './features/calendar/CalendarPage';
 import { TasksPage } from './features/tasks/TasksPage';
@@ -35,9 +36,39 @@ function SyncRunner() {
   return null;
 }
 
+/**
+ * 第一次打開的門：這台裝置沒有自己的資料、沒登入、也還沒選過「本機使用」→ 先看歡迎畫面（登入 / 本機）。
+ * 登入回呼頁永遠放行。示範資料不再在啟動時自動塞進去，由歡迎畫面的「本機使用」決定。
+ */
+function Gate() {
+  const settings = useSettings();
+  const session = useSession();
+  const location = useLocation();
+  const onlyDemo = useLiveQuery(() => hasOnlyDemoData(), []);
+  if (location.pathname === '/auth') return <AppRoutes />;
+  if (onlyDemo === undefined) return null;
+  if (!session && !settings.onboarded && onlyDemo) return <WelcomePage />;
+  return <AppRoutes />;
+}
+
+function AppRoutes() {
+  return (
+    <Routes>
+      <Route element={<AppShell />}>
+        <Route index element={<DashboardPage />} />
+        <Route path="calendar" element={<CalendarPage />} />
+        <Route path="tasks" element={<TasksPage />} />
+        <Route path="log" element={<LogPage />} />
+        <Route path="settings" element={<SettingsPage />} />
+        <Route path="auth" element={<AuthCallbackPage />} />
+      </Route>
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
+  );
+}
+
 async function bootstrap(): Promise<void> {
-  const settings = await getSettings();
-  await loadDemoDataIfEmpty(settings.timeZone);
+  await getSettings(); // 確保設定列存在且欄位完整
   // 要求瀏覽器盡量不要自動清除本機資料（iOS Safari 對加入主畫面的 PWA 最有效）
   try {
     await navigator.storage?.persist?.();
@@ -86,16 +117,7 @@ export function App() {
         </div>
       )}
       <HashRouter>
-        <Routes>
-          <Route element={<AppShell />}>
-            <Route index element={<DashboardPage />} />
-            <Route path="calendar" element={<CalendarPage />} />
-            <Route path="tasks" element={<TasksPage />} />
-            <Route path="log" element={<LogPage />} />
-            <Route path="settings" element={<SettingsPage />} />
-            <Route path="auth" element={<AuthCallbackPage />} />
-          </Route>
-        </Routes>
+        <Gate />
       </HashRouter>
     </ToastProvider>
   );

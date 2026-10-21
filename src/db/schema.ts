@@ -194,6 +194,8 @@ export const SettingsSchema = z.object({
     .default({ enabled: false, auto: true }),
   /** 規則引擎是否用歷史校正係數調整預估工時 */
   useCalibration: z.boolean().default(true),
+  /** 已經過了第一次打開的歡迎畫面（選了登入或本機使用）；清除全部資料後會再出現 */
+  onboarded: z.boolean().default(false),
   demoDataLoaded: z.boolean(),
   firstUsedAt: IsoDateTime.optional(),
   lastBackupAt: IsoDateTime.optional(),
@@ -236,6 +238,7 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     ai: { enabled: false, provider: 'none', model: 'claude-haiku-5-5', maxOutputTokens: 1024, dailyLimit: 30 },
     sync: { enabled: false, auto: true },
     useCalibration: true,
+    onboarded: false,
     demoDataLoaded: false,
     firstUsedAt: now,
     backupReminderDays: 7,
