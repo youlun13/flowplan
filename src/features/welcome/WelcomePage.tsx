@@ -11,6 +11,7 @@ import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { fetchProviders, loginUrl, proxyUrlOf, type ProvidersResult } from '@/auth/session';
 import { DEFAULT_PROXY_URL } from '@/config';
+import { AiError } from '@/ai/types';
 import { updateSettings } from '@/db/repo';
 import { loadDemoDataIfEmpty } from '@/db/seed';
 
@@ -19,7 +20,7 @@ export function WelcomePage() {
   const toast = useToast();
   const navigate = useNavigate();
   const proxyUrl = proxyUrlOf(settings, DEFAULT_PROXY_URL);
-  const [providers, setProviders] = useState<ProvidersResult | 'loading' | 'unavailable'>(proxyUrl ? 'loading' : 'unavailable');
+  const [providers, setProviders] = useState<ProvidersResult | 'loading' | 'unavailable' | 'outdated'>(proxyUrl ? 'loading' : 'unavailable');
   const [busy, setBusy] = useState(false);
 
   useEffect(() => {
@@ -29,8 +30,8 @@ export function WelcomePage() {
       .then((r) => {
         if (!cancelled) setProviders(r);
       })
-      .catch(() => {
-        if (!cancelled) setProviders('unavailable');
+      .catch((e: unknown) => {
+        if (!cancelled) setProviders(e instanceof AiError && e.code === 'worker_outdated' ? 'outdated' : 'unavailable');
       });
     return () => {
       cancelled = true;
@@ -50,7 +51,7 @@ export function WelcomePage() {
     }
   }
 
-  const list = providers !== 'loading' && providers !== 'unavailable' ? providers.providers : [];
+  const list = typeof providers === 'object' ? providers.providers : [];
 
   return (
     <div className="mx-auto flex min-h-dvh max-w-md flex-col justify-center px-6 py-10">
@@ -67,7 +68,8 @@ export function WelcomePage() {
         ))}
         {list.length > 0 && <p className="text-xs text-muted">登入後會載入你在其他裝置的資料；之後每台裝置登入同一個帳號就是同一份。</p>}
         {providers === 'unavailable' && proxyUrl && <p className="text-xs text-muted">目前連不到 Worker，可以先在這台裝置使用，之後再到設定登入。</p>}
-        {providers !== 'loading' && providers !== 'unavailable' && list.length === 0 && <p className="text-xs text-muted">這個 Worker 沒有開放登入；可先在本機使用，或到設定填通關密語。</p>}
+        {providers === 'outdated' && <p className="text-xs text-warn">Worker 還是舊版（沒有登入功能）。擁有者把最新的 worker/src/index.js 貼上 Cloudflare 並 Deploy 後，重新整理這頁就會出現登入按鈕。</p>}
+        {typeof providers === 'object' && list.length === 0 && <p className="text-xs text-muted">這個 Worker 沒有開放登入；可先在本機使用，或到設定填通關密語。</p>}
 
         <Button full onClick={() => useLocally(true)} disabled={busy} className="min-h-12" data-testid="welcome-local">
           <Smartphone size={18} className="mr-2" /> 先在這台裝置使用
