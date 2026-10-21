@@ -88,11 +88,11 @@ scripts/make-artifact-page.mjs   把 dist/index.html 轉成 claude.ai 預覽用�
 
 ## 部署（全部為靜態檔，第一階段零費用）
 
-`npm run build` 後把 `dist/` 放到任一靜態主機即可。已知免費方案（請以當期官方頁面為準，不要預設永久免費）：
+**已設定自動部署**：push 到 `main` 會觸發 `.github/workflows/deploy.yml`，跑完測試與建置後部署到 GitHub Pages：
 
-- **Cloudflare Pages**：連 GitHub repo，build command `npm run build`，output `dist`。
-- **Vercel**：同上，framework 選 Vite。
-- **GitHub Pages**：把 `dist/` 推到 `gh-pages` 分支；因為 `base: './'` 與 Hash 路由，子路徑也能用。
+> https://youlun13.github.io/flowplan/
+
+因為 `base: './'` 與 Hash 路由，放在子路徑也能正常運作。其他免費靜態主機（Cloudflare Pages、Vercel）同樣只需 `npm run build` 後上傳 `dist/`；請以當期官方頁面確認免費額度。
 
 第三階段的 AI 代理需要一支伺服器端函式（Cloudflare Pages Functions 或 Vercel Functions）保管金鑰；到時再評估，任何需要付款資訊的步驟都會先列出等你確認。
 
