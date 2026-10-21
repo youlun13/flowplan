@@ -1,0 +1,10 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#FFFFFF"/>
+  <!-- F 深綠 -->
+  <path d="M16 51V15" fill="none" stroke="#0F6E56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M16 15h30" fill="none" stroke="#0F6E56" stroke-width="6" stroke-linecap="round"/>
+  <!-- 中橫被風吹開捲成 P：淺綠，一筆 -->
+  <path d="M16 29h20c7 0 11 3 11 7.5S43 44 36 44h-9" fill="none" stroke="#3FB58F" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 動勢尾巴 -->
+  <path d="M27 44c-2.5 2-4 4.5-4.5 7" fill="none" stroke="#3FB58F" stroke-width="4" stroke-linecap="round" opacity=".45"/>
+</svg>

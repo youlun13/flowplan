@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#FFFFFF"/>
+  <!-- 一筆畫：F 的直筆往下、折回上去變成 P 的碗，像一條水流 -->
+  <path d="M16 50V14h20" fill="none" stroke="#0F6E56" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <path d="M16 30h13c7 0 11 3.6 11 8s-4 8-11 8h-5" fill="none" stroke="#3FB58F" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+  <!-- 水流尾巴：從 P 碗的出口流出去，漸淡 -->
+  <path d="M40 46c4 0 7 1.5 9 4" fill="none" stroke="#3FB58F" stroke-width="4" stroke-linecap="round" opacity=".45"/>
+</svg>

@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <rect width="64" height="64" rx="14" fill="#FFFFFF"/>
+  <!-- 深綠 F：脊柱 + 上橫 + 中橫 -->
+  <path d="M18 51V13" fill="none" stroke="#0F6E56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M18 13h22" fill="none" stroke="#0F6E56" stroke-width="6" stroke-linecap="round"/>
+  <path d="M18 27h12" fill="none" stroke="#0F6E56" stroke-width="6" stroke-linecap="round"/>
+  <!-- 淺綠 P 碗：從中橫末端接出去，順時針繞回脊柱，像河道轉彎 -->
+  <path d="M30 27h6c7 0 11 3.5 11 8s-4 8-11 8H24" fill="none" stroke="#3FB58F" stroke-width="6" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
