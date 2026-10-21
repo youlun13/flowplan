@@ -1,0 +1,141 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #f4f5f7;
+  --surface: #ffffff;
+  --surface-2: #eceef2;
+  --ink: #1a1d24;
+  --muted: #6a7281;
+  --line: #e1e4ea;
+  --accent: #0f6e56;
+  --accent-soft: #e2f1ec;
+  --accent-ink: #ffffff;
+  --hard: #34415c;
+  --hard-soft: #e6eaf2;
+  --warn: #b45309;
+  --warn-soft: #fdf1df;
+  --danger: #b91c1c;
+  --danger-soft: #fbe7e7;
+  --done: #8a93a3;
+  color-scheme: light;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) {
+    --bg: #121418;
+    --surface: #1a1d23;
+    --surface-2: #23272f;
+    --ink: #e8eaee;
+    --muted: #9aa3b2;
+    --line: #2c313a;
+    --accent: #3fb58f;
+    --accent-soft: #16302a;
+    --accent-ink: #0b1a15;
+    --hard: #b3bdd6;
+    --hard-soft: #262c3b;
+    --warn: #e0a14a;
+    --warn-soft: #3a2a12;
+    --danger: #f08383;
+    --danger-soft: #3b1d1d;
+    --done: #6e7788;
+    color-scheme: dark;
+  }
+}
+
+:root[data-theme="dark"] {
+  --bg: #121418;
+  --surface: #1a1d23;
+  --surface-2: #23272f;
+  --ink: #e8eaee;
+  --muted: #9aa3b2;
+  --line: #2c313a;
+  --accent: #3fb58f;
+  --accent-soft: #16302a;
+  --accent-ink: #0b1a15;
+  --hard: #b3bdd6;
+  --hard-soft: #262c3b;
+  --warn: #e0a14a;
+  --warn-soft: #3a2a12;
+  --danger: #f08383;
+  --danger-soft: #3b1d1d;
+  --done: #6e7788;
+  color-scheme: dark;
+}
+
+@theme inline {
+  --color-bg: var(--bg);
+  --color-surface: var(--surface);
+  --color-surface-2: var(--surface-2);
+  --color-ink: var(--ink);
+  --color-muted: var(--muted);
+  --color-line: var(--line);
+  --color-accent: var(--accent);
+  --color-accent-soft: var(--accent-soft);
+  --color-accent-ink: var(--accent-ink);
+  --color-hard: var(--hard);
+  --color-hard-soft: var(--hard-soft);
+  --color-warn: var(--warn);
+  --color-warn-soft: var(--warn-soft);
+  --color-danger: var(--danger);
+  --color-danger-soft: var(--danger-soft);
+  --color-done: var(--done);
+  --font-sans: -apple-system, BlinkMacSystemFont, "PingFang TC", "Noto Sans TC",
+    "Microsoft JhengHei", "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+
+html,
+body {
+  background: var(--bg);
+  color: var(--ink);
+  min-height: 100%;
+}
+
+body {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  -webkit-tap-highlight-color: transparent;
+  overscroll-behavior-y: none;
+  line-height: 1.45;
+}
+
+/* 時間數字一律等寬，對齊才像一個排程工具 */
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+
+/* iOS Safari：輸入欄位 < 16px 會自動縮放，這裡統一避免 */
+input,
+select,
+textarea,
+button {
+  font: inherit;
+  font-size: 16px;
+}
+
+input[type="date"],
+input[type="time"],
+input[type="datetime-local"] {
+  min-height: 2.75rem;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    transition: none !important;
+    animation: none !important;
+  }
+}
+
+/* 底部導覽與 iPhone 安全區 */
+.safe-bottom {
+  padding-bottom: env(safe-area-inset-bottom, 0px);
+}
+.safe-top {
+  padding-top: env(safe-area-inset-top, 0px);
+}
