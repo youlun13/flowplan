@@ -4,6 +4,7 @@ import { db } from '@/db/db';
 import type { WorkBlock } from '@/db/schema';
 import { buildPlan, type Incident, type PlanProposal, type PlannerInput } from '@/engine/planner';
 import { computeAvailability } from '@/engine/availability';
+import { calibration } from '@/engine/stats';
 import { occurrencesOnDate } from '@/engine/recurrence';
 import { useDailyState, useOccurrences, useRunningLog, useTasks } from './useData';
 import { useSettings } from './useSettings';
@@ -68,6 +69,7 @@ export function usePlanner(nowMs: number) {
       activeTaskId: running?.taskId,
       energy: daily?.energy,
       tomorrow: tomorrowInfo,
+      calibration: settings.useCalibration ? calibration(tasks) : undefined,
     }),
     [tz, settings, tasks, todayOcc, blocks, running?.taskId, daily?.energy, tomorrowInfo],
   );

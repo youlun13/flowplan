@@ -10,6 +10,11 @@ ALLOWED_ORIGINS = "https://youlun13.github.io"
 AI_MODEL = "claude-haiku-5-5"
 AI_MAX_OUTPUT_TOKENS = "1024"
 
+# 跨裝置同步（第四階段）：在 dashboard 建立 KV namespace 後填入 id；用 dashboard 綁定則不需要這段
+# [[kv_namespaces]]
+# binding = "FLOWPLAN_KV"
+# id = "<your-kv-namespace-id>"
+
 # Secrets（不要寫在這裡）：
 #   npx wrangler secret put ANTHROPIC_API_KEY
 #   npx wrangler secret put FLOWPLAN_PROXY_SECRET

@@ -1,5 +1,5 @@
 import Dexie, { type Table } from 'dexie';
-import type { ActivityLog, AiUsageDay, CalendarEvent, DailyState, PlanRevision, Settings, Task, WorkBlock } from './schema';
+import type { ActivityLog, AiUsageDay, CalendarEvent, DailyState, PlanRevision, Settings, SyncMeta, SyncQueueItem, Task, WorkBlock } from './schema';
 
 export class FlowPlanDB extends Dexie {
   tasks!: Table<Task, string>;
@@ -10,6 +10,8 @@ export class FlowPlanDB extends Dexie {
   planRevisions!: Table<PlanRevision, string>;
   settings!: Table<Settings, string>;
   aiUsage!: Table<AiUsageDay, string>;
+  syncQueue!: Table<SyncQueueItem, string>;
+  syncMeta!: Table<SyncMeta, string>;
 
   constructor(name = 'flowplan') {
     super(name);
@@ -27,6 +29,10 @@ export class FlowPlanDB extends Dexie {
     });
     this.version(3).stores({
       aiUsage: 'date',
+    });
+    this.version(4).stores({
+      syncQueue: 'key, table, queuedAt',
+      syncMeta: 'id',
     });
   }
 }

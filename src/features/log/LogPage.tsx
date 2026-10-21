@@ -1,7 +1,8 @@
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Play, Plus, Square } from 'lucide-react';
 import { PageHeader } from '@/components/AppShell';
-import { Button, Chip, Empty, Input, Select, cx } from '@/components/ui';
+import { Button, Chip, Empty, Input, Segmented, Select, cx } from '@/components/ui';
+import { WeekView } from './WeekView';
 import { LogForm } from '@/components/LogForm';
 import { LOG_CATEGORY_LABEL, type ActivityLog, type LogCategory } from '@/db/schema';
 import { startLog, stopLog } from '@/db/repo';
@@ -10,7 +11,7 @@ import { useNow } from '@/hooks/useNow';
 import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { isOpen } from '@/lib/select';
-import { addLocalDays, dayStartMs, formatDuration, formatTime, localDateTimeToMs, relativeDayLabel, toLocalDate, toLocalTime, type LocalDate } from '@/lib/time';
+import { addLocalDays, dayStartMs, formatDuration, formatTime, localDateTimeToMs, relativeDayLabel, startOfLocalWeek, toLocalDate, toLocalTime, type LocalDate } from '@/lib/time';
 
 interface Row {
   kind: 'log' | 'gap';
@@ -25,6 +26,8 @@ export function LogPage() {
   const nowMs = useNow(15_000);
   const today = toLocalDate(nowMs, tz);
   const [date, setDate] = useState<LocalDate>(today);
+  const [view, setView] = useState<'day' | 'week'>('day');
+  const [weekStart, setWeekStart] = useState<LocalDate>(() => startOfLocalWeek(today, settings.weekStartsOn));
   const logs = useLogsForDate(date);
   const running = useRunningLog();
   const tasks = useTasks();
@@ -92,8 +95,15 @@ export function LogPage() {
 
   return (
     <div>
-      <PageHeader title="紀錄" sub="今天實際上幾點到幾點做了什麼" />
+      <PageHeader
+        title="紀錄"
+        sub={view === 'day' ? '今天實際上幾點到幾點做了什麼' : '這週花了多少時間、完成了什麼、預估準不準'}
+        aside={<Segmented size="sm" value={view} onChange={setView} options={[{ value: 'day', label: '日' }, { value: 'week', label: '週' }]} />}
+      />
 
+      {view === 'week' && <WeekView weekStart={weekStart} today={today} tz={tz} tasks={tasks} nowMs={nowMs} onShift={(n) => setWeekStart(addLocalDays(weekStart, 7 * n))} />}
+
+      {view === 'day' && (<>
       <div className="flex items-center justify-between">
         <button type="button" onClick={() => setDate(addLocalDays(date, -1))} aria-label="前一天" className="rounded-full p-2 active:bg-surface-2">
           <ChevronLeft size={22} />
@@ -197,6 +207,8 @@ export function LogPage() {
           )}
         </ul>
       )}
+
+      </>)}
 
       <LogForm open={editing !== null} onClose={() => setEditing(null)} log={editing ?? undefined} />
       <LogForm

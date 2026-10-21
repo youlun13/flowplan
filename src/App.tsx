@@ -9,6 +9,27 @@ import { CalendarPage } from './features/calendar/CalendarPage';
 import { TasksPage } from './features/tasks/TasksPage';
 import { LogPage } from './features/log/LogPage';
 import { SettingsPage } from './features/settings/SettingsPage';
+import { registerPwa } from './pwa';
+import { makeTransport, startAutoSync } from './sync/engine';
+import { useSettings } from './hooks/useSettings';
+import { Button } from './components/ui';
+
+/** 設定裡開了同步就啟動自動同步；關掉就停 */
+function SyncRunner() {
+  const settings = useSettings();
+  const enabled = settings.sync.enabled && settings.sync.auto && Boolean(settings.ai.proxyUrl && settings.ai.proxySecret);
+  useEffect(() => {
+    if (!enabled) return;
+    const stop = startAutoSync(async () => {
+      const { getSettings } = await import('./db/repo');
+      const s = await getSettings();
+      if (!s.sync.enabled || !s.ai.proxyUrl || !s.ai.proxySecret) return null;
+      return makeTransport(s);
+    });
+    return stop;
+  }, [enabled]);
+  return null;
+}
 
 async function bootstrap(): Promise<void> {
   const settings = await getSettings();
@@ -24,11 +45,13 @@ async function bootstrap(): Promise<void> {
 export function App() {
   const [ready, setReady] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [reload, setReload] = useState<null | (() => Promise<void>)>(null);
 
   useEffect(() => {
     bootstrap()
       .then(() => setReady(true))
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)));
+    void registerPwa((doReload) => setReload(() => doReload));
   }, []);
 
   if (error) {
@@ -44,6 +67,20 @@ export function App() {
 
   return (
     <ToastProvider>
+      <SyncRunner />
+      {reload && (
+        <div className="safe-top fixed inset-x-0 top-0 z-[80] flex justify-center px-4 pt-2">
+          <div className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2 text-sm shadow-lg">
+            <span>FlowPlan 有新版本</span>
+            <Button variant="primary" className="min-h-9 px-3 text-sm" onClick={() => reload()}>
+              更新
+            </Button>
+            <button type="button" className="text-muted" onClick={() => setReload(null)}>
+              稍後
+            </button>
+          </div>
+        </div>
+      )}
       <HashRouter>
         <Routes>
           <Route element={<AppShell />}>

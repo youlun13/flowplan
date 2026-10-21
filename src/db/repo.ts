@@ -370,8 +370,12 @@ export async function deleteDemoData(): Promise<void> {
 }
 
 export async function clearAllData(): Promise<void> {
-  await db.transaction('rw', db.tables, async () => {
-    await Promise.all(db.tables.map((t) => t.clear()));
+  // 清空本機不應被當成「刪除」傳到雲端；用 ignoreTransaction 外的旗標由 sync engine 控制
+  const { withoutSyncTracking } = await import('@/sync/engine');
+  await withoutSyncTracking(async () => {
+    await db.transaction('rw', db.tables, async () => {
+      await Promise.all(db.tables.map((t) => t.clear()));
+    });
   });
 }
 

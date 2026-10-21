@@ -14,6 +14,8 @@ import { HelpSheet } from './HelpSheet';
 import { DEFAULT_MODEL, MODEL_PRICING, formatUsd } from '@/ai/pricing';
 import { makeProvider } from '@/ai/resolve';
 import { getUsage, totalUsage } from '@/db/usage';
+import { enqueueEverything, makeTransport, replaceWithRemote, runSync, refreshSyncStatus } from '@/sync/engine';
+import { useSyncStatus } from '@/hooks/useSync';
 import { todayLocal } from '@/lib/time';
 
 export function SettingsPage() {
@@ -22,7 +24,10 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<Settings>(settings);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [confirm, setConfirm] = useState<null | 'demo' | 'clear' | 'import'>(null);
+  const [confirm, setConfirm] = useState<null | 'demo' | 'clear' | 'import' | 'replace-remote' | 'delete-remote'>(null);
+  const syncStatus = useSyncStatus();
+  const [syncBusy, setSyncBusy] = useState(false);
+  const [cloudInfo, setCloudInfo] = useState<string | null>(null);
   const [pendingImport, setPendingImport] = useState<{ json: string; mode: ImportMode; summary: string } | null>(null);
   const [importMode, setImportMode] = useState<ImportMode>('replace');
   const [storage, setStorage] = useState<{ persisted?: boolean; usageMB?: number } | null>(null);
@@ -32,6 +37,41 @@ export function SettingsPage() {
   const [testing, setTesting] = useState(false);
   const usageToday = useLiveQuery(() => getUsage(todayLocal(settings.timeZone)), [settings.timeZone]);
   const usageTotal = useLiveQuery(() => totalUsage(), []);
+
+  const setSync = (patch: Partial<Settings['sync']>) => {
+    setDraft((d) => ({ ...d, sync: { ...d.sync, ...patch } }));
+    setDirty(true);
+  };
+
+  async function syncNowClick() {
+    setSyncBusy(true);
+    try {
+      await runSync('手動');
+      await refreshSyncStatus();
+      toast.show('已同步');
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : '同步失敗', 'danger');
+    } finally {
+      setSyncBusy(false);
+    }
+  }
+
+  async function checkCloud() {
+    setSyncBusy(true);
+    try {
+      const t = makeTransport({ ...draft });
+      const st = await t.status();
+      if (!st.configured) setCloudInfo('Worker 還沒綁定 KV（FLOWPLAN_KV）。照 docs/API_SETUP.md Part C 綁定後再試。');
+      else {
+        const c = st.counts ?? {};
+        setCloudInfo(`雲端版本 ${st.version ?? 0} · ${c.tasks ?? 0} 個任務、${c.events ?? 0} 個行程、${c.logs ?? 0} 筆紀錄${st.updatedAt ? ` · 更新於 ${formatDateTimeZh(st.updatedAt, settings.timeZone)}` : ''}`);
+      }
+    } catch (e) {
+      setCloudInfo(e instanceof Error ? e.message : '無法連線');
+    } finally {
+      setSyncBusy(false);
+    }
+  }
 
   const setAi = (patch: Partial<Settings['ai']>) => {
     setDraft((d) => ({ ...d, ai: { ...d.ai, ...patch } }));
@@ -78,7 +118,12 @@ export function SettingsPage() {
   async function save() {
     setError(null);
     try {
+      const wasEnabled = settings.sync.enabled;
       await updateSettings(draft);
+      if (draft.sync.enabled && !wasEnabled) {
+        const n = await enqueueEverything();
+        toast.show(`已啟用同步，${n} 筆資料排入第一次推送`);
+      }
       setDirty(false);
       toast.show('已儲存設定');
     } catch (e) {
@@ -204,6 +249,7 @@ export function SettingsPage() {
           <Toggle checked={draft.preferDeadlineFirst} onChange={(v) => set('preferDeadlineFirst', v)} label="優先保住有截止時間的任務" />
           <Toggle checked={draft.energyMatching} onChange={(v) => set('energyMatching', v)} label="依精力狀態匹配任務" />
           <Toggle checked={draft.allowSplitting} onChange={(v) => set('allowSplitting', v)} label="允許把任務拆成多段" />
+          <Toggle checked={draft.useCalibration} onChange={(v) => set('useCalibration', v)} label="依過去的實際 / 預估比例校正工時" />
         </div>
       </section>
 
@@ -263,6 +309,48 @@ export function SettingsPage() {
           </span>
         </div>
         <p className="mt-2 text-xs text-muted">費用為估算；真正的硬上限請在 Anthropic Console 的 FlowPlan workspace 設 spend limit。額度用完時 API 只會停止，不會扣款。</p>
+      </section>
+
+      <section className="mt-4 rounded-xl border border-line bg-surface p-4">
+        <h2 className="text-[15px] font-semibold">跨裝置同步</h2>
+        <p className="mt-0.5 text-xs text-muted">
+          用同一個 Worker 與通關密語，把資料存一份在你自己的 Cloudflare KV（免費），iPhone 與電腦之間自動同步。需要先在 Worker 綁定 KV（見 docs/API_SETUP.md Part C）。資料以明文存在你的 KV；同一筆資料兩邊都改過時，以較新的為準。
+        </p>
+        <div className="mt-2 divide-y divide-line">
+          <Toggle checked={draft.sync.enabled} onChange={(v) => setSync({ enabled: v })} label="啟用同步" />
+          <Toggle checked={draft.sync.auto} onChange={(v) => setSync({ auto: v })} label="自動同步（有變更後幾秒推送、回到前景時拉取）" />
+        </div>
+        {(!draft.ai.proxyUrl || !draft.ai.proxySecret) && <p className="mt-2 text-xs text-warn">請先在上方「AI 助手」填好 Worker 網址與通關密語（同步共用同一組）。</p>}
+        <div className="mt-3 flex flex-wrap items-center gap-2">
+          <Button onClick={syncNowClick} disabled={syncBusy || !settings.sync.enabled || !settings.ai.proxyUrl || !settings.ai.proxySecret}>
+            {syncBusy ? '同步中…' : '立即同步'}
+          </Button>
+          <Button onClick={checkCloud} disabled={syncBusy || !draft.ai.proxyUrl || !draft.ai.proxySecret}>
+            檢查雲端
+          </Button>
+          <span className="text-xs text-muted">
+            {syncStatus.state === 'disabled' && '未啟用'}
+            {syncStatus.state === 'syncing' && '同步中…'}
+            {syncStatus.state === 'offline' && '離線，恢復連線後自動同步'}
+            {syncStatus.state === 'idle' && `已同步 · 版本 ${syncStatus.version}`}
+            {syncStatus.state === 'error' && <span className="text-danger">{syncStatus.lastError}</span>}
+            {syncStatus.pending > 0 && ` · ${syncStatus.pending} 筆待推送`}
+            {syncStatus.lastPullAt && ` · 上次 ${formatDateTimeZh(syncStatus.lastPullAt, settings.timeZone)}`}
+          </span>
+        </div>
+        {cloudInfo && <p className="mt-2 text-xs text-muted">{cloudInfo}</p>}
+        <details className="mt-3 text-sm">
+          <summary className="cursor-pointer text-muted">進階：以雲端為準 / 刪除雲端資料</summary>
+          <div className="mt-2 flex flex-wrap gap-2">
+            <Button variant="danger" onClick={() => setConfirm('replace-remote')} disabled={!settings.sync.enabled || !settings.ai.proxyUrl}>
+              以雲端為準覆蓋本機
+            </Button>
+            <Button variant="danger" onClick={() => setConfirm('delete-remote')} disabled={!settings.ai.proxyUrl}>
+              刪除雲端資料
+            </Button>
+          </div>
+          <p className="mt-2 text-xs text-muted">「以雲端為準」會清掉本機的任務、行程、紀錄再從雲端載入（設定與密語保留）。「刪除雲端資料」只刪 KV 裡的快照，本機不動。</p>
+        </details>
       </section>
 
       <div className="sticky bottom-20 mt-4 md:bottom-4">
@@ -332,6 +420,48 @@ export function SettingsPage() {
           setConfirm(null);
           setDirty(false);
           toast.show('已清除全部資料');
+        }}
+        onCancel={() => setConfirm(null)}
+      />
+      <Confirm
+        open={confirm === 'replace-remote'}
+        title="以雲端為準覆蓋本機？"
+        message="本機的任務、行程、紀錄會先清空，再從雲端載入。本機尚未推送的變更會遺失。"
+        confirmLabel="覆蓋本機"
+        danger
+        onConfirm={async () => {
+          setConfirm(null);
+          setSyncBusy(true);
+          try {
+            const r = await replaceWithRemote(makeTransport(settings));
+            await refreshSyncStatus();
+            toast.show(`已從雲端載入 ${r.upserted} 筆（版本 ${r.version}）`);
+          } catch (e) {
+            toast.show(e instanceof Error ? e.message : '失敗', 'danger');
+          } finally {
+            setSyncBusy(false);
+          }
+        }}
+        onCancel={() => setConfirm(null)}
+      />
+      <Confirm
+        open={confirm === 'delete-remote'}
+        title="刪除雲端資料？"
+        message="只會刪除 Cloudflare KV 裡的快照，本機資料不受影響。下次同步會把本機資料重新推上去。"
+        confirmLabel="刪除雲端"
+        danger
+        onConfirm={async () => {
+          setConfirm(null);
+          setSyncBusy(true);
+          try {
+            await makeTransport(settings).remove();
+            setCloudInfo('雲端快照已刪除');
+            toast.show('已刪除雲端資料');
+          } catch (e) {
+            toast.show(e instanceof Error ? e.message : '失敗', 'danger');
+          } finally {
+            setSyncBusy(false);
+          }
         }}
         onCancel={() => setConfirm(null)}
       />

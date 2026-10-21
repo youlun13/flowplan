@@ -27,6 +27,8 @@ jobs:
       - run: npm ci
       - run: npm test
       - run: npm run build
+        env:
+          FLOWPLAN_BASE: /flowplan/
       - uses: actions/configure-pages@v5
         with:
           enablement: true

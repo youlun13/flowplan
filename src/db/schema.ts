@@ -185,6 +185,15 @@ export const SettingsSchema = z.object({
     /** 通關密語（不是 API key）；只存在這台裝置，匯出備份時會略過 */
     proxySecret: z.string().max(300).optional(),
   }),
+  sync: z
+    .object({
+      enabled: z.boolean(),
+      /** 自動：有變更時延遲推送、回到前景時拉取 */
+      auto: z.boolean(),
+    })
+    .default({ enabled: false, auto: true }),
+  /** 規則引擎是否用歷史校正係數調整預估工時 */
+  useCalibration: z.boolean().default(true),
   demoDataLoaded: z.boolean(),
   firstUsedAt: IsoDateTime.optional(),
   lastBackupAt: IsoDateTime.optional(),
@@ -209,6 +218,8 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     energyMatching: true,
     allowSplitting: true,
     ai: { enabled: false, provider: 'none', model: 'claude-haiku-5-5', maxOutputTokens: 1024, dailyLimit: 30 },
+    sync: { enabled: false, auto: true },
+    useCalibration: true,
     demoDataLoaded: false,
     firstUsedAt: now,
     backupReminderDays: 7,
@@ -226,6 +237,28 @@ export const AiUsageSchema = z.object({
   updatedAt: IsoDateTime,
 });
 export type AiUsageDay = z.infer<typeof AiUsageSchema>;
+
+/** 待同步的變更（本機） */
+export const SyncQueueSchema = z.object({
+  /** `${table}:${id}` */
+  key: z.string(),
+  table: z.string(),
+  id: z.string(),
+  /** 有值代表刪除 */
+  deletedAt: IsoDateTime.optional(),
+  queuedAt: IsoDateTime,
+});
+export type SyncQueueItem = z.infer<typeof SyncQueueSchema>;
+
+export const SyncMetaSchema = z.object({
+  id: z.literal('meta'),
+  version: z.number().int().min(0),
+  lastPullAt: IsoDateTime.optional(),
+  lastPushAt: IsoDateTime.optional(),
+  lastError: z.string().optional(),
+  deviceId: z.string(),
+});
+export type SyncMeta = z.infer<typeof SyncMetaSchema>;
 
 export const BACKUP_SCHEMA_VERSION = 1;
 

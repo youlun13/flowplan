@@ -7,6 +7,7 @@ import { useTasks } from '@/hooks/useData';
 import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { wouldCreateCycle } from '@/engine/dependencies';
+import { calibratedMinutes, calibration } from '@/engine/stats';
 import { isOpen } from '@/lib/select';
 import { addLocalDays, localDateTimeToIso, todayLocal, toLocalDate, toLocalTime, type LocalDate } from '@/lib/time';
 
@@ -74,6 +75,13 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
 
   const today = todayLocal(tz);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
+
+  const cal = useMemo(() => calibration(tasks), [tasks]);
+  const calHint = useMemo(() => {
+    const c = calibratedMinutes(draft.estimatedMinutes, draft.energyRequired, cal);
+    if (c.basis === 'none' || Math.abs(c.factor - 1) < 0.1) return null;
+    return `你過去${c.basis === 'energy' ? ENERGY_LABEL[draft.energyRequired] + '任務' : ''}實際約是預估的 ${c.factor} 倍，規劃時會以 ${c.minutes} 分計`;
+  }, [draft.estimatedMinutes, draft.energyRequired, cal]);
 
   const dependencyOptions = useMemo(
     () =>
@@ -199,6 +207,7 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
             <Input type="number" inputMode="numeric" min={5} max={1440} step={5} value={draft.estimatedMinutes} onChange={(e) => set('estimatedMinutes', Number(e.target.value))} />
           </Field>
         </div>
+        {calHint && <p className="-mt-2 text-xs text-muted">{calHint}</p>}
         <div className="-mt-2 flex flex-wrap gap-1.5">
           {EST_PRESETS.map((m) => (
             <button

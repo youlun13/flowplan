@@ -80,6 +80,8 @@ export interface PlannerInput {
   incident?: Incident;
   /** 明天的概況，用於「延到明天」的建議文字 */
   tomorrow?: { availableMinutes: number; plannedMinutes: number };
+  /** 預估工時校正（由歷史算出；undefined = 不校正） */
+  calibration?: { factor?: number; byEnergy: Partial<Record<Energy, { factor: number; samples: number }>> };
 }
 
 /* ------------------------------------ 輸出 ------------------------------------ */
@@ -322,6 +324,7 @@ export function buildPlan(input: PlannerInput): PlanProposal {
   const today = date;
   const candidates: Candidate[] = [];
   const blockedByDeps: Task[] = [];
+  const calibratedTitles: string[] = [];
   for (const task of input.tasks) {
     if (!isOpen(task) || task.id === doneTaskId) continue;
     const risk = dueRisk(task, nowMs, tz);
@@ -332,9 +335,13 @@ export function buildPlan(input: PlannerInput): PlanProposal {
       blockedByDeps.push(task);
       continue;
     }
-    let remaining = clampMinutes(task.estimatedMinutes - (task.actualMinutes ?? 0));
-    if (task.status !== 'in_progress' && task.actualMinutes === undefined) remaining = task.estimatedMinutes;
+    // 校正：用歷史「實際 / 預估」比例調整預估（同精力優先）
+    const calFactor = input.calibration ? (input.calibration.byEnergy[task.energyRequired]?.factor ?? input.calibration.factor ?? 1) : 1;
+    const estimated = clampMinutes(task.estimatedMinutes * calFactor);
+    let remaining = clampMinutes(estimated - (task.actualMinutes ?? 0));
+    if (task.status !== 'in_progress' && task.actualMinutes === undefined) remaining = estimated;
     if (overrun && overrun.taskId === task.id) remaining = overrun.remainingMinutes;
+    if (calFactor !== 1 && Math.abs(calFactor - 1) >= 0.1) calibratedTitles.push(`${task.title}（×${calFactor}）`);
     const minimum = task.minimumMinutes && task.minimumMinutes < remaining ? task.minimumMinutes : undefined;
     candidates.push({
       task,
@@ -592,6 +599,7 @@ export function buildPlan(input: PlannerInput): PlanProposal {
   for (const t of blockedByDeps) {
     explanation.push(`「${t.title}」的前置任務還沒完成，先不排。`);
   }
+  if (calibratedTitles.length) explanation.push(`依你過去的實際 / 預估比例調整了工時：${calibratedTitles.join('、')}。可在設定關閉。`);
 
   const starving = candidates.filter((c) => c.task.deferCount >= 2);
   if (starving.length) warnings.push(`這些任務已被反覆延後：${starving.map((c) => `${c.task.title}（${c.task.deferCount} 次）`).join('、')}。考慮固定保留一段時間，或重新評估是否還需要做。`);

@@ -7,6 +7,7 @@
  *  3. 把「狀況解析」「方案解說」兩種請求轉成 Anthropic Messages API 呼叫，
  *     用 tool_use 強制結構化輸出
  *  4. 把上游錯誤正規化成固定的 error code，讓 App 能明確降級
+ *  5. （第四階段）/v1/sync：以 Cloudflare KV 做單一使用者的跨裝置同步，需綁定 FLOWPLAN_KV
  *
  * 不做：寫資料、決定排程、改任務。那些都在 App 端的規則引擎與驗證器。
  */
@@ -76,7 +77,11 @@ export default {
 
     const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/v1/health') {
-      return json({ ok: true, result: { hasKey: Boolean(env.ANTHROPIC_API_KEY), model: pickModel(env, undefined), allowedOrigins } }, 200, cors);
+      return json({ ok: true, result: { hasKey: Boolean(env.ANTHROPIC_API_KEY), model: pickModel(env, undefined), allowedOrigins, sync: Boolean(env.FLOWPLAN_KV) } }, 200, cors);
+    }
+    if (url.pathname.startsWith('/v1/sync')) {
+      const r = await handleSync(request, env, url, json, cors);
+      if (r) return r;
     }
     if (request.method !== 'POST' || url.pathname !== '/v1/ai') return json({ ok: false, error: { code: 'not_found', message: '沒有這個路徑' } }, 404, cors);
     if (!env.ANTHROPIC_API_KEY) return json({ ok: false, error: { code: 'misconfigured', message: 'Worker 尚未設定 ANTHROPIC_API_KEY' } }, 500, cors);
@@ -225,7 +230,7 @@ function corsHeaders(origin, allowed) {
   const allow = allowed.includes(origin) ? origin : allowed[0] || 'null';
   return {
     'Access-Control-Allow-Origin': allow,
-    'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
+    'Access-Control-Allow-Methods': 'GET, POST, DELETE, OPTIONS',
     'Access-Control-Allow-Headers': 'Content-Type, Authorization',
     'Access-Control-Max-Age': '86400',
     Vary: 'Origin',
@@ -263,3 +268,155 @@ function safeEqual(a, b) {
   for (let i = 0; i < len; i++) diff |= (x.charCodeAt(i) || 0) ^ (y.charCodeAt(i) || 0);
   return diff === 0;
 }
+
+/* ------------------------------------ 同步 ------------------------------------ */
+/**
+ * 跨裝置同步（Cloudflare KV，單一使用者）。
+ *
+ * 資料模型：KV 裡只有一把 key `snapshot`：
+ *   { version, updatedAt, records: { tasks: {id: rec}, events, logs, dailyStates, workBlocks, planRevisions, settings }, tombstones: { "table:id": deletedAt } }
+ *
+ * 合併規則（確定性、可在客戶端重現）：
+ *   - 同 id 以 updatedAt 較新者為準（ISO 字串比較）
+ *   - tombstone 比該筆 updatedAt 新 → 視為刪除
+ *   - 每次 push 成功 version +1；客戶端帶 baseVersion，伺服器無論如何都合併（不拒絕），回傳合併後的完整快照
+ *
+ * 不做：多使用者、加密（資料以明文存在你自己的 KV）、歷史版本。
+ */
+
+const SYNC_TABLES = ['tasks', 'events', 'logs', 'dailyStates', 'workBlocks', 'planRevisions', 'settings'];
+const KEY = 'snapshot';
+const MAX_PUSH_BYTES = 8_000_000;
+
+function emptySnapshot() {
+  const records = {};
+  for (const t of SYNC_TABLES) records[t] = {};
+  return { version: 0, updatedAt: null, records, tombstones: {} };
+}
+
+function idOf(table, rec) {
+  return table === 'dailyStates' ? rec.date : rec.id;
+}
+
+function stampOf(rec) {
+  return typeof rec?.updatedAt === 'string' ? rec.updatedAt : '';
+}
+
+/** 純函數：把 changes 合併進 snapshot，回傳新快照與統計 */
+function mergeSnapshot(base, changes) {
+  const out = { version: base.version, updatedAt: base.updatedAt, records: {}, tombstones: { ...(base.tombstones || {}) } };
+  for (const t of SYNC_TABLES) out.records[t] = { ...(base.records?.[t] || {}) };
+  const stats = { applied: 0, ignored: 0, deleted: 0 };
+
+  // 先套刪除：tombstone 若比現有紀錄新就刪
+  for (const [key, deletedAt] of Object.entries(changes.tombstones || {})) {
+    if (typeof deletedAt !== 'string') continue;
+    const [table, id] = key.split(':');
+    if (!SYNC_TABLES.includes(table) || !id) continue;
+    const prevTomb = out.tombstones[key];
+    if (prevTomb && prevTomb >= deletedAt) continue;
+    out.tombstones[key] = deletedAt;
+    const existing = out.records[table][id];
+    if (existing && stampOf(existing) <= deletedAt) {
+      delete out.records[table][id];
+      stats.deleted += 1;
+    }
+  }
+
+  // 再套 upsert：比現有紀錄新、且沒有更新的 tombstone 才收
+  for (const t of SYNC_TABLES) {
+    const list = changes.records?.[t];
+    if (!list || typeof list !== 'object') continue;
+    for (const rec of Object.values(list)) {
+      if (!rec || typeof rec !== 'object') continue;
+      const id = idOf(t, rec);
+      if (!id || typeof id !== 'string') continue;
+      const stamp = stampOf(rec);
+      const tomb = out.tombstones[`${t}:${id}`];
+      if (tomb && tomb >= stamp) {
+        stats.ignored += 1;
+        continue;
+      }
+      const existing = out.records[t][id];
+      if (existing && stampOf(existing) >= stamp) {
+        stats.ignored += 1;
+        continue;
+      }
+      out.records[t][id] = rec;
+      stats.applied += 1;
+    }
+  }
+  return { snapshot: out, stats };
+}
+
+async function readSnapshot(kv) {
+  const raw = await kv.get(KEY, 'json');
+  if (!raw || typeof raw !== 'object') return emptySnapshot();
+  const snap = emptySnapshot();
+  snap.version = Number.isFinite(raw.version) ? raw.version : 0;
+  snap.updatedAt = typeof raw.updatedAt === 'string' ? raw.updatedAt : null;
+  for (const t of SYNC_TABLES) snap.records[t] = raw.records?.[t] && typeof raw.records[t] === 'object' ? raw.records[t] : {};
+  snap.tombstones = raw.tombstones && typeof raw.tombstones === 'object' ? raw.tombstones : {};
+  return snap;
+}
+
+function countRecords(snap) {
+  const counts = {};
+  for (const t of SYNC_TABLES) counts[t] = Object.keys(snap.records[t]).length;
+  return counts;
+}
+
+/**
+ * 路由：
+ *   GET    /v1/sync          → { ok, result: { snapshot } }（?since=<version>：若伺服器 version <= since 回 { unchanged: true, version }）
+ *   POST   /v1/sync          → body { baseVersion, records, tombstones } → 合併、version+1 → { ok, result: { snapshot, stats } }
+ *   DELETE /v1/sync          → 刪除雲端快照
+ *   GET    /v1/sync/status   → { ok, result: { configured, version, updatedAt, counts } }
+ */
+async function handleSync(request, env, url, json, cors) {
+  const kv = env.FLOWPLAN_KV;
+  if (url.pathname === '/v1/sync/status' && request.method === 'GET') {
+    if (!kv) return json({ ok: true, result: { configured: false } }, 200, cors);
+    const snap = await readSnapshot(kv);
+    return json({ ok: true, result: { configured: true, version: snap.version, updatedAt: snap.updatedAt, counts: countRecords(snap) } }, 200, cors);
+  }
+  if (url.pathname !== '/v1/sync') return null;
+  if (!kv) return json({ ok: false, error: { code: 'sync_not_configured', message: 'Worker 尚未綁定 KV（FLOWPLAN_KV）' } }, 501, cors);
+
+  if (request.method === 'GET') {
+    const snap = await readSnapshot(kv);
+    const since = Number.parseInt(url.searchParams.get('since') ?? '', 10);
+    if (Number.isFinite(since) && snap.version <= since) return json({ ok: true, result: { unchanged: true, version: snap.version } }, 200, cors);
+    return json({ ok: true, result: { snapshot: snap } }, 200, cors);
+  }
+
+  if (request.method === 'POST') {
+    const raw = await request.text();
+    if (raw.length > MAX_PUSH_BYTES) return json({ ok: false, error: { code: 'too_large', message: '同步資料太大' } }, 413, cors);
+    let body;
+    try {
+      body = JSON.parse(raw);
+    } catch {
+      return json({ ok: false, error: { code: 'bad_request', message: '請求不是有效的 JSON' } }, 400, cors);
+    }
+    if (!body || typeof body !== 'object') return json({ ok: false, error: { code: 'bad_request', message: '缺少內容' } }, 400, cors);
+    const base = await readSnapshot(kv);
+    const { snapshot, stats } = mergeSnapshot(base, { records: body.records || {}, tombstones: body.tombstones || {} });
+    const changed = stats.applied + stats.deleted > 0 || Object.keys(body.tombstones || {}).length > 0;
+    if (changed) {
+      snapshot.version = base.version + 1;
+      snapshot.updatedAt = new Date().toISOString();
+      await kv.put(KEY, JSON.stringify(snapshot));
+    }
+    return json({ ok: true, result: { snapshot, stats } }, 200, cors);
+  }
+
+  if (request.method === 'DELETE') {
+    await kv.delete(KEY);
+    return json({ ok: true, result: { deleted: true } }, 200, cors);
+  }
+
+  return json({ ok: false, error: { code: 'not_found', message: '沒有這個路徑' } }, 404, cors);
+}
+
+export { mergeSnapshot, emptySnapshot, SYNC_TABLES };

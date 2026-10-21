@@ -18,15 +18,15 @@ def tpe_today(offset=0):
 results = []
 def check(name, cond):
     results.append((name, bool(cond)))
-    print(("PASS " if cond else "FAIL ") + name)
+    print(("PASS " if cond else "FAIL ") + name + (f"  [errors so far: {len(errors)}]" if errors else ""))
 
 with sync_playwright() as p:
     browser = p.chromium.launch()
     ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, locale="zh-TW", timezone_id="Asia/Taipei")
     page = ctx.new_page()
     errors = []
-    page.on("pageerror", lambda e: errors.append(str(e)))
-    page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
+    page.on("pageerror", lambda e: errors.append(f"PAGEERROR {getattr(e, 'message', e)} :: {str(getattr(e, 'stack', ''))[:400]}"))
+    page.on("console", lambda m: errors.append(f"{m.text} @ {m.location.get('url','')}:{m.location.get('lineNumber','')}") if m.type == "error" else None)
 
     page.goto(BASE)
     page.wait_for_selector("text=下一步（")
@@ -267,6 +267,75 @@ with sync_playwright() as p:
     page.click("a[href='#/settings']:visible")
     page.wait_for_selector("text=每日時間")
     check("設定頁顯示今日用量", page.locator("text=/今天 [2-9] 次/").count() == 1)
+
+    # ---- 第四階段：假 Worker 同步往返 + 週統計 ----
+    cloud = {"snapshot": None}
+    def sync_route(route, request):
+        cors = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "content-type": "application/json"}
+        if request.method == "OPTIONS":
+            return route.fulfill(status=204, headers=cors)
+        if request.headers.get("authorization") != "Bearer e2e-secret":
+            return route.fulfill(status=401, headers=cors, body=json.dumps({"ok": False, "error": {"code": "unauthorized"}}))
+        url = request.url
+        if url.endswith("/v1/sync/status"):
+            snap = cloud["snapshot"]
+            return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"configured": True, "version": snap["version"] if snap else 0, "updatedAt": None, "counts": {t: len(v) for t, v in snap["records"].items()} if snap else {}}}))
+        if request.method == "GET":
+            snap = cloud["snapshot"]
+            since = int(url.split("since=")[1]) if "since=" in url else -1
+            if snap is None or snap["version"] <= since:
+                return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"unchanged": True, "version": snap["version"] if snap else 0}}))
+            return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"snapshot": snap}}))
+        if request.method == "POST":
+            body = json.loads(request.post_data or "{}")
+            snap = cloud["snapshot"] or {"version": 0, "updatedAt": None, "records": {t: {} for t in ["tasks", "events", "logs", "dailyStates", "workBlocks", "planRevisions", "settings"]}, "tombstones": {}}
+            for t, recs in (body.get("records") or {}).items():
+                snap["records"].setdefault(t, {}).update(recs)
+            for k, v in (body.get("tombstones") or {}).items():
+                tbl, rid = k.split(":", 1)
+                snap["records"].get(tbl, {}).pop(rid, None)
+                snap["tombstones"][k] = v
+            snap["version"] += 1
+            cloud["snapshot"] = snap
+            return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"snapshot": snap, "stats": {}}}))
+        if request.method == "DELETE":
+            cloud["snapshot"] = None
+            return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"deleted": True}}))
+        return route.fulfill(status=404, headers=cors, body="{}")
+    page.route(WORKER + "/v1/sync**", sync_route)
+
+    page.click("a[href='#/settings']:visible")
+    page.wait_for_selector("text=跨裝置同步")
+    page.click("button[role='switch']:has-text('啟用同步')")
+    page.click("button:has-text('儲存設定')")
+    page.wait_for_selector("text=已啟用同步")
+    page.wait_for_timeout(6000)  # 自動推送 4 秒去抖
+    check("驗收 同步：啟用後本機資料推上雲端", cloud["snapshot"] is not None and len(cloud["snapshot"]["records"]["tasks"]) >= 1)
+    assert "e2e-secret" not in json.dumps(cloud["snapshot"]["records"].get("settings", {})), "settings 不應含通關密語"
+    check("驗收 同步：雲端 settings 不含通關密語", True)
+    page.click("button:has-text('檢查雲端')")
+    page.wait_for_selector("text=/雲端版本 [1-9]/")
+    check("設定頁可查雲端狀態", True)
+
+    # 模擬另一台裝置新增任務 → 本機回到前景時拉回
+    import uuid
+    rid = str(uuid.uuid4())
+    now_iso = datetime.datetime.now(datetime.timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
+    cloud["snapshot"]["records"]["tasks"][rid] = {"id": rid, "title": "E2E 來自另一台裝置", "status": "todo", "priority": "P2", "plannedDate": tpe_today(), "estimatedMinutes": 30, "energyRequired": "medium", "splittable": True, "dependencies": [], "deferCount": 0, "createdAt": now_iso, "updatedAt": now_iso}
+    cloud["snapshot"]["version"] += 1
+    page.click("button:has-text('立即同步')")
+    page.wait_for_timeout(800)
+    page.click("a[href='#/tasks']:visible")
+    page.wait_for_selector("text=E2E 來自另一台裝置")
+    check("驗收 同步：另一台裝置的新任務拉回本機", True)
+
+    # 週統計
+    page.click("a[href='#/log']:visible")
+    page.wait_for_selector("input[placeholder='現在開始做什麼？']")
+    page.click("button[role='radio']:has-text('週')")
+    page.wait_for_selector("text=每天記錄了多少")
+    check("紀錄頁週檢視", page.locator("h2:has-text('預估準不準')").count() == 1 and page.locator("h2:has-text('一直被延後的')").count() == 1)
+    page.screenshot(path=f"{SHOTS}/12-week.png", full_page=True)
 
     # ---- 設定頁與匯出 ----
     page.click("a[href='#/settings']:visible")

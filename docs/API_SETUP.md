@@ -76,6 +76,27 @@ Anthropic Claude API（用 Max 方案每月附帶的 US$100 額度）
 6. **填進 App**
    FlowPlan → 設定 → AI 助手：打開「啟用」、供應商 Claude、Worker 網址、通關密語、模型、每日上限 → 儲存 → 「測試連線」。
 
+## Part C：跨裝置同步（Cloudflare KV，免費）
+
+同步用的是同一個 Worker 與同一組通關密語，資料存在你自己的 Cloudflare KV。做一次就好：
+
+1. **建立 KV namespace**
+   Cloudflare dashboard 左側 → Storage & Databases → KV → Create namespace → 名稱 `flowplan-sync` → Create。
+2. **綁定到 Worker**
+   Workers & Pages → flowplan-ai → Settings → Bindings → Add binding → 類型 KV namespace：
+   - Variable name：`FLOWPLAN_KV`（一定要這個名字）
+   - KV namespace：選 `flowplan-sync`
+   → Save / Deploy。
+3. **更新 Worker 程式碼**
+   flowplan-ai → Edit code → 把 repo 的 `worker/src/index.js` 最新版整個貼上（第四階段起含同步端點）→ Deploy。
+4. **在 App 啟用**
+   每台裝置：設定 → 跨裝置同步 → 啟用 → 儲存設定。第一台會把本機全部資料推上去；第二台啟用後按「立即同步」就會拉下來。
+   按「檢查雲端」可看雲端版本與筆數。
+
+**怎麼運作**：每筆資料帶 `updatedAt`，同一筆兩邊都改過時以較新的為準；刪除會以 tombstone 傳到另一台。本機尚未推送的變更不會被雲端覆蓋。有變更後約 4 秒自動推送，回到前景、重新上線、以及每 90 秒拉取一次。
+
+**注意**：資料以明文存在你的 KV（只有知道通關密語的人能讀）。KV 免費方案每日 1,000 次寫入 / 100,000 次讀取，FlowPlan 一天通常幾十次寫入。想清掉雲端：設定 → 進階 → 刪除雲端資料。
+
 ## 用量與費用怎麼看
 
 - Console：https://platform.claude.com/cost （按 workspace 篩選 FlowPlan）。
