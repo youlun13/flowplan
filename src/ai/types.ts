@@ -49,6 +49,7 @@ export type AiErrorCode =
   | 'unauthorized'
   | 'session_expired'
   | 'not_allowed'
+  | 'worker_outdated'
   | 'forbidden_origin'
   | 'misconfigured'
   | 'invalid_key'
@@ -85,6 +86,7 @@ export const AI_ERROR_TEXT: Record<AiErrorCode, string> = {
   unauthorized: 'Worker 拒絕：通關密語不正確',
   session_expired: '登入已過期或失效，請到設定重新登入',
   not_allowed: '這個帳號不在 Worker 的允許清單裡',
+  worker_outdated: 'Worker 還是舊版（沒有登入功能），請把最新的 worker/src/index.js 貼上並 Deploy',
   forbidden_origin: 'Worker 拒絕：這個網址不在允許清單',
   misconfigured: 'Worker 還沒設定金鑰或密語',
   invalid_key: 'Anthropic 金鑰無效或已停用',

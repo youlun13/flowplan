@@ -121,7 +121,11 @@ async function getJson(url: string, init: RequestInit, fetchImpl: typeof fetch):
 
 export async function fetchProviders(proxyUrl: string, fetchImpl: typeof fetch = fetch): Promise<ProvidersResult> {
   const r = await getJson(`${proxyUrl.replace(/\/+$/, '')}/auth/providers`, { method: 'GET' }, fetchImpl);
-  if (!r.ok) throw new AiError('unknown', r.error?.message);
+  if (!r.ok) {
+    // 舊版 Worker 沒有 /auth/*：會因為沒帶密語回 unauthorized，或回 not_found
+    if (r.error?.code === 'unauthorized' || r.error?.code === 'not_found') throw new AiError('worker_outdated');
+    throw new AiError('unknown', r.error?.message);
+  }
   const res = (r.result ?? {}) as Partial<ProvidersResult>;
   const providers = Array.isArray(res.providers) ? res.providers.filter((p): p is ProviderInfo => p && (p.id === 'google' || p.id === 'github')) : [];
   return { providers, passphrase: Boolean(res.passphrase), allowlist: Boolean(res.allowlist), configuredProviders: Number(res.configuredProviders ?? 0) };
