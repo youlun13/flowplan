@@ -139,8 +139,9 @@ export async function updateTask(id: string, patch: Partial<Omit<Task, 'id' | 'c
 }
 
 export async function deleteTask(id: string): Promise<void> {
-  await db.transaction('rw', db.tasks, db.logs, async () => {
+  await db.transaction('rw', db.tasks, db.logs, db.workBlocks, async () => {
     await db.tasks.delete(id);
+    await db.workBlocks.where('taskId').equals(id).delete();
     const dependents = await db.tasks.filter((t) => t.dependencies.includes(id)).toArray();
     for (const t of dependents) {
       await db.tasks.put({ ...t, dependencies: t.dependencies.filter((d) => d !== id), updatedAt: nowIso() });
@@ -160,11 +161,17 @@ export async function setTaskDone(id: string, done: boolean): Promise<Task> {
   if (!current) throw new ValidationError('找不到這個任務');
   if (done) {
     const minutes = await loggedMinutesForTask(id);
-    return updateTask(id, {
+    const updated = await updateTask(id, {
       status: 'done',
       completedAt: nowIso(),
       actualMinutes: minutes > 0 ? Math.round(minutes) : current.actualMinutes,
     });
+    // 還沒做的排程區塊一併結束，之後重排不會再安排它
+    const blocks = await db.workBlocks.where('taskId').equals(id).toArray();
+    for (const b of blocks) {
+      if (b.status === 'planned' || b.status === 'active') await db.workBlocks.put({ ...b, status: 'done', endedAt: nowIso(), updatedAt: nowIso() });
+    }
+    return updated;
   }
   return updateTask(id, { status: 'todo', completedAt: undefined });
 }

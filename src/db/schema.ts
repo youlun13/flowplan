@@ -111,15 +111,20 @@ export const DailyStateSchema = z.object({
 });
 export type DailyState = z.infer<typeof DailyStateSchema>;
 
-/** 第二階段用：由任務拆出的工作區塊 */
+/** 由任務拆出、已套用到某一天的工作區塊 */
 export const WorkBlockSchema = z.object({
   id: Id,
   taskId: Id,
   date: LocalDateSchema,
   startAt: IsoDateTime,
   endAt: IsoDateTime,
-  status: z.enum(['proposed', 'planned', 'active', 'done', 'skipped']),
-  isMinimum: z.boolean().default(false),
+  status: z.enum(['planned', 'active', 'done', 'skipped']),
+  /** 是最低成果版本 */
+  isMinimum: z.boolean(),
+  /** 由哪一次 PlanRevision 建立 */
+  revisionId: Id.optional(),
+  /** 為什麼排在這裡（規則引擎的理由，給人看） */
+  reason: z.string().max(300).optional(),
   startedAt: IsoDateTime.optional(),
   pausedAt: IsoDateTime.optional(),
   endedAt: IsoDateTime.optional(),
@@ -128,16 +133,27 @@ export const WorkBlockSchema = z.object({
 });
 export type WorkBlock = z.infer<typeof WorkBlockSchema>;
 
-/** 第二階段用：一次重新規劃的方案、差異、是否套用 */
+/** 一次重新規劃：觸發原因、摘要、套用前後快照（供撤銷） */
 export const PlanRevisionSchema = z.object({
   id: Id,
+  date: LocalDateSchema,
   createdAt: IsoDateTime,
   trigger: z.string(),
   applied: z.boolean(),
   appliedAt: IsoDateTime.optional(),
   revertedAt: IsoDateTime.optional(),
   summary: z.string(),
-  payload: z.unknown(),
+  payload: z.object({
+    /** 套用前這一天的所有區塊 */
+    blocksBefore: z.array(z.unknown()),
+    /** 套用後這一天的所有區塊 */
+    blocksAfter: z.array(z.unknown()),
+    createdEventId: Id.optional(),
+    completedTaskId: Id.optional(),
+    previousTaskStatus: TaskStatusSchema.optional(),
+    previousEnergy: EnergySchema.optional(),
+    energySet: EnergySchema.optional(),
+  }),
 });
 export type PlanRevision = z.infer<typeof PlanRevisionSchema>;
 
@@ -152,6 +168,8 @@ export const SettingsSchema = z.object({
   sleepStart: HHmmSchema,
   sleepEnd: HHmmSchema,
   bufferMinutes: z.number().int().min(0).max(120),
+  /** 兩個工作區塊之間的休息 */
+  breakMinutes: z.number().int().min(0).max(60),
   focusMinutes: z.number().int().min(10).max(240),
   preferDeadlineFirst: z.boolean(),
   energyMatching: z.boolean(),
@@ -181,6 +199,7 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     sleepStart: '00:00',
     sleepEnd: '07:30',
     bufferMinutes: 10,
+    breakMinutes: 10,
     focusMinutes: 45,
     preferDeadlineFirst: true,
     energyMatching: true,

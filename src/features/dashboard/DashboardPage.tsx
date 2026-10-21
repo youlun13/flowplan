@@ -1,49 +1,47 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Play, Square, CircleCheckBig, Plus } from 'lucide-react';
+import { AlertTriangle, Play, Square, CircleCheckBig, Plus, Undo2, SkipForward, CalendarClock } from 'lucide-react';
+import { useLiveQuery } from 'dexie-react-hooks';
 import { PageHeader } from '@/components/AppShell';
-import { Button, Chip, Empty, Section, Segmented, Sheet, cx } from '@/components/ui';
+import { Button, Chip, Empty, Section, Segmented, cx } from '@/components/ui';
 import { TaskForm } from '@/components/TaskForm';
 import { TaskRow } from '@/components/TaskRow';
 import { EventForm } from '@/components/EventForm';
 import { DayTimeline } from '@/components/DayTimeline';
-import { ENERGY_LABEL, type Energy, type Task } from '@/db/schema';
+import { IncidentSheet } from './IncidentSheet';
+import { ENERGY_LABEL, type Energy, type Task, type WorkBlock } from '@/db/schema';
 import { cancelTask, deferTask, setDailyState, setTaskDone, startLog, stopLog } from '@/db/repo';
+import { latestRevisionForDate, setBlockStatus, undoRevision } from '@/db/plan';
 import { computeAvailability } from '@/engine/availability';
 import { pickNextStep } from '@/engine/nextStep';
-import { occurrencesOnDate, type Occurrence } from '@/engine/recurrence';
-import { useDailyState, useEvents, useLogsForDate, useOccurrences, useRunningLog, useTasks } from '@/hooks/useData';
+import type { Occurrence } from '@/engine/recurrence';
+import { useEvents, useLogsForDate } from '@/hooks/useData';
 import { useNow } from '@/hooks/useNow';
+import { usePlanner } from '@/hooks/usePlanner';
 import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { completionForDate, overdueTasks, sortTasks, tasksForDate } from '@/lib/select';
-import { addLocalDays, diffLocalDays, formatDuration, formatLocalDateZh, formatTime, timeToMinutes, toLocalDate, toLocalTime } from '@/lib/time';
+import { addLocalDays, diffLocalDays, formatDuration, formatLocalDateZh, formatTime, timeToMinutes, toLocalTime } from '@/lib/time';
 
 export function DashboardPage() {
-  const settings = useSettings();
-  const tz = settings.timeZone;
   const nowMs = useNow(30_000);
-  const today = toLocalDate(nowMs, tz);
-  const tasks = useTasks();
+  const { today, tz, tasks, todayOcc, blocks, running, daily, settings, buildProposal } = usePlanner(nowMs);
   const events = useEvents();
-  const occurrences = useOccurrences(addLocalDays(today, -1), today, tz);
   const logs = useLogsForDate(today);
-  const running = useRunningLog();
-  const daily = useDailyState(today);
+  const latestRevision = useLiveQuery(() => latestRevisionForDate(today), [today, blocks]);
   const toast = useToast();
 
   const [editing, setEditing] = useState<Task | null>(null);
   const [creating, setCreating] = useState(false);
   const [occEditing, setOccEditing] = useState<Occurrence | null>(null);
-  const [incidentOpen, setIncidentOpen] = useState(false);
+  const [incident, setIncident] = useState<null | { replan: boolean }>(null);
 
   const todayTasks = useMemo(() => sortTasks(tasksForDate(tasks, today, tz), 'priority'), [tasks, today, tz]);
   const remaining = todayTasks.filter((t) => t.status !== 'done');
   const completion = completionForDate(tasks, today, tz);
   const overdue = useMemo(() => overdueTasks(tasks, today, nowMs), [tasks, today, nowMs]);
+  const tasksById = useMemo(() => new Map(tasks.map((t) => [t.id, t])), [tasks]);
 
-  // 包含昨天開始、跨午夜到今天的行程
-  const dayOcc = useMemo(() => occurrencesOnDate(occurrences, today, tz), [occurrences, today, tz]);
   const availability = useMemo(
     () =>
       computeAvailability({
@@ -54,25 +52,34 @@ export function DashboardPage() {
         sleepStart: settings.sleepStart,
         sleepEnd: settings.sleepEnd,
         bufferMinutes: settings.bufferMinutes,
-        busy: dayOcc,
+        busy: todayOcc,
         from: nowMs,
       }),
-    [today, tz, settings, dayOcc, nowMs],
+    [today, tz, settings, todayOcc, nowMs],
   );
 
-  const next = useMemo(() => pickNextStep(tasks, nowMs, tz, daily?.energy), [tasks, nowMs, tz, daily?.energy]);
-  const runningTask = running?.taskId ? tasks.find((t) => t.id === running.taskId) : undefined;
+  // 已套用的排程：目前 / 下一個區塊
+  const openBlocks = useMemo(
+    () => blocks.filter((b) => (b.status === 'planned' || b.status === 'active') && tasksById.get(b.taskId) && tasksById.get(b.taskId)!.status !== 'done' && new Date(b.endAt).getTime() > nowMs),
+    [blocks, tasksById, nowMs],
+  );
+  const currentBlock = openBlocks.find((b) => new Date(b.startAt).getTime() <= nowMs) ?? openBlocks[0];
+  const missedBlocks = blocks.filter((b) => b.status === 'planned' && new Date(b.endAt).getTime() <= nowMs && tasksById.get(b.taskId)?.status !== 'done');
+  const suggestion = useMemo(() => (currentBlock ? null : pickNextStep(tasks, nowMs, tz, daily?.energy)), [currentBlock, tasks, nowMs, tz, daily?.energy]);
+  const nextTask = currentBlock ? tasksById.get(currentBlock.taskId) : suggestion?.task;
+  const runningTask = running?.taskId ? tasksById.get(running.taskId) : undefined;
   const occForEdit = occEditing ? events.find((e) => e.id === occEditing.eventId) : undefined;
 
-  async function startNext(task: Task) {
+  async function start(task: Task, block?: WorkBlock) {
     try {
       await startLog({ title: task.title, taskId: task.id, category: 'task' }, tz);
+      if (block) await setBlockStatus(block.id, 'active');
       toast.show(`開始：${task.title}`);
     } catch (e) {
       toast.show(e instanceof Error ? e.message : '無法開始', 'danger');
     }
   }
-  async function finishTask(task: Task) {
+  async function finish(task: Task) {
     try {
       if (running?.taskId === task.id) await stopLog(running.id, undefined, tz);
       await setTaskDone(task.id, true);
@@ -81,8 +88,14 @@ export function DashboardPage() {
       toast.show(e instanceof Error ? e.message : '無法完成', 'danger');
     }
   }
-  async function setEnergy(e: Energy) {
-    await setDailyState(today, { energy: e });
+  async function undo() {
+    if (!latestRevision) return;
+    try {
+      await undoRevision(latestRevision.id);
+      toast.show('已撤銷最近一次套用');
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : '無法撤銷', 'danger');
+    }
   }
 
   return (
@@ -93,23 +106,20 @@ export function DashboardPage() {
         aside={<div className="text-[34px] font-semibold leading-none tnum">{formatTime(nowMs, tz)}</div>}
       />
 
-      {/* 完成率 */}
       <div className="h-1.5 w-full overflow-hidden rounded-full bg-surface-2" role="progressbar" aria-valuenow={Math.round(completion.ratio * 100)} aria-valuemin={0} aria-valuemax={100}>
         <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${completion.ratio * 100}%` }} />
       </div>
 
-      {/* 精力 */}
       <div className="mt-4 flex items-center justify-between gap-3">
         <span className="text-sm text-muted">現在的精力</span>
         <Segmented
           size="sm"
           value={daily?.energy ?? ('medium' as Energy)}
-          onChange={setEnergy}
+          onChange={(e) => setDailyState(today, { energy: e })}
           options={(['high', 'medium', 'low'] as Energy[]).map((e) => ({ value: e, label: ENERGY_LABEL[e].replace('精力', '') }))}
         />
       </div>
 
-      {/* 進行中 */}
       {running && (
         <div className="mt-4 flex items-center gap-3 rounded-xl border border-accent/40 bg-accent-soft px-4 py-3">
           <div className="min-w-0 flex-1">
@@ -117,7 +127,7 @@ export function DashboardPage() {
             <div className="truncate text-[15px] font-medium">{running.title}</div>
           </div>
           {runningTask && runningTask.status !== 'done' && (
-            <Button variant="primary" onClick={() => finishTask(runningTask)} aria-label="完成任務">
+            <Button variant="primary" onClick={() => finish(runningTask)} aria-label="完成任務">
               <CircleCheckBig size={18} /> 完成
             </Button>
           )}
@@ -130,36 +140,49 @@ export function DashboardPage() {
       {/* 下一步 */}
       <section className="mt-4 rounded-2xl bg-accent px-4 py-4 text-accent-ink">
         <div className="flex items-center justify-between">
-          <span className="text-sm opacity-85">下一步做什麼</span>
-          <span className="text-[11px] opacity-70">規則引擎簡易版</span>
+          <span className="text-sm opacity-85">{currentBlock ? '下一步（已套用的排程）' : '下一步（建議，尚未排程）'}</span>
+          {currentBlock && (
+            <span className="text-[12px] opacity-80 tnum">
+              {formatTime(currentBlock.startAt, tz)}–{formatTime(currentBlock.endAt, tz)}
+            </span>
+          )}
         </div>
-        {next ? (
+        {nextTask ? (
           <>
-            <button type="button" onClick={() => setEditing(next.task)} className="mt-1 block text-left text-[20px] font-semibold leading-snug">
-              {next.task.title}
+            <button type="button" onClick={() => setEditing(nextTask)} className="mt-1 block text-left text-[20px] font-semibold leading-snug">
+              {nextTask.title}
+              {currentBlock?.isMinimum && <span className="ml-2 align-middle rounded-md bg-white/20 px-1.5 py-0.5 text-xs font-medium">最低版本</span>}
             </button>
             <p className="mt-1 text-sm opacity-90">
-              {next.reason} · 預估 {formatDuration(next.task.estimatedMinutes)}
-              {next.task.minimumOutcome && ` · 最低成果：${next.task.minimumOutcome}`}
+              {currentBlock ? currentBlock.reason ?? '依套用的排程' : suggestion?.reason}
+              {!currentBlock && ` · 預估 ${formatDuration(nextTask.estimatedMinutes)}`}
+              {nextTask.minimumOutcome && (!currentBlock || currentBlock.isMinimum) && ` · 最低成果：${nextTask.minimumOutcome}`}
             </p>
-            {next.warning && (
+            {suggestion?.warning && (
               <p className="mt-2 flex gap-1.5 rounded-lg bg-black/15 px-3 py-2 text-sm">
-                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {next.warning}
+                <AlertTriangle size={16} className="mt-0.5 shrink-0" /> {suggestion.warning}
               </p>
             )}
-            <div className="mt-3 flex gap-2">
-              {running?.taskId !== next.task.id ? (
-                <Button className="bg-white/95 text-accent" onClick={() => startNext(next.task)}>
+            <div className="mt-3 flex flex-wrap gap-2">
+              {running?.taskId !== nextTask.id ? (
+                <Button className="bg-white/95 text-accent" onClick={() => start(nextTask, currentBlock)}>
                   <Play size={16} /> 開始
                 </Button>
               ) : (
-                <Button className="bg-white/95 text-accent" onClick={() => finishTask(next.task)}>
+                <Button className="bg-white/95 text-accent" onClick={() => finish(nextTask)}>
                   <CircleCheckBig size={16} /> 完成
                 </Button>
               )}
-              <Button className="bg-white/15 text-accent-ink" onClick={() => setEditing(next.task)}>
-                調整
-              </Button>
+              {!currentBlock && (
+                <Button className="bg-white/15 text-accent-ink" onClick={() => setIncident({ replan: true })}>
+                  <CalendarClock size={16} /> 規劃今天
+                </Button>
+              )}
+              {currentBlock && (
+                <Button className="bg-white/15 text-accent-ink" onClick={() => setBlockStatus(currentBlock.id, 'skipped').then(() => toast.show('已跳過這個區塊'))}>
+                  <SkipForward size={16} /> 跳過
+                </Button>
+              )}
             </div>
           </>
         ) : (
@@ -167,11 +190,49 @@ export function DashboardPage() {
         )}
       </section>
 
-      <Button full className="mt-3" onClick={() => setIncidentOpen(true)}>
+      <Button full className="mt-3" onClick={() => setIncident({ replan: false })}>
         <AlertTriangle size={18} className="text-warn" /> 我遇到狀況了
       </Button>
 
-      {/* 逾期 */}
+      {/* 最近套用 / 撤銷 */}
+      {latestRevision && (
+        <div className="mt-2 flex items-center justify-between rounded-lg bg-surface-2/70 px-3 py-2 text-sm">
+          <span className="text-muted">
+            {formatTime(latestRevision.appliedAt ?? latestRevision.createdAt, tz)} 套用 · {latestRevision.summary}
+          </span>
+          <button type="button" onClick={undo} className="flex items-center gap-1 text-accent">
+            <Undo2 size={16} /> 撤銷
+          </button>
+        </div>
+      )}
+
+      {/* 今日排程 */}
+      {blocks.length > 0 && (
+        <Section title="今日排程" aside={missedBlocks.length > 0 ? `${missedBlocks.length} 個區塊已過時，重新規劃可清掉` : undefined}>
+          <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
+            {blocks.map((b) => {
+              const t = tasksById.get(b.taskId);
+              const past = new Date(b.endAt).getTime() <= nowMs;
+              const done = b.status === 'done' || t?.status === 'done';
+              const skipped = b.status === 'skipped';
+              return (
+                <li key={b.id} className={cx('flex items-center gap-3 px-3 py-2', (done || skipped || past) && 'text-done')}>
+                  <span className="w-24 shrink-0 text-sm tnum">
+                    {formatTime(b.startAt, tz)}–{formatTime(b.endAt, tz)}
+                  </span>
+                  <button type="button" onClick={() => t && setEditing(t)} className="min-w-0 flex-1 text-left">
+                    <span className={cx('block truncate text-[15px]', done && 'line-through')}>{t?.title ?? '（任務已刪除）'}</span>
+                    {b.reason && !done && <span className="block truncate text-xs text-muted">{b.reason}</span>}
+                  </button>
+                  {b.isMinimum && !done && <Chip tone="warn">最低</Chip>}
+                  {done ? <Chip tone="done">完成</Chip> : skipped ? <Chip>跳過</Chip> : b.status === 'active' ? <Chip tone="accent">進行中</Chip> : past ? <Chip>已過</Chip> : null}
+                </li>
+              );
+            })}
+          </ul>
+        </Section>
+      )}
+
       {overdue.length > 0 && (
         <Section title={`逾期未處理（${overdue.length}）`} aside="不會自動消失，請決定怎麼辦">
           <div className="divide-y divide-line rounded-xl border border-warn/40 bg-warn-soft/40 px-3">
@@ -182,7 +243,6 @@ export function DashboardPage() {
         </Section>
       )}
 
-      {/* 今天剩餘 */}
       <Section
         title={`今天剩餘（${remaining.length}）`}
         aside={
@@ -202,13 +262,12 @@ export function DashboardPage() {
         )}
       </Section>
 
-      {/* 行程 */}
-      <Section title={`今天的固定行程（${dayOcc.length}）`} aside={<Link to="/calendar" className="text-accent">日曆</Link>}>
-        {dayOcc.length === 0 ? (
+      <Section title={`今天的固定行程（${todayOcc.length}）`} aside={<Link to="/calendar" className="text-accent">日曆</Link>}>
+        {todayOcc.length === 0 ? (
           <p className="text-sm text-muted">今天沒有固定行程。</p>
         ) : (
           <ul className="divide-y divide-line rounded-xl border border-line bg-surface">
-            {dayOcc.map((o) => (
+            {todayOcc.map((o) => (
               <li key={o.id}>
                 <button type="button" onClick={() => setOccEditing(o)} className="flex w-full items-center gap-3 px-3 py-2.5 text-left">
                   <span className={cx('w-24 shrink-0 text-sm tnum', o.endMs < nowMs ? 'text-done' : 'text-ink')}>
@@ -223,13 +282,13 @@ export function DashboardPage() {
         )}
       </Section>
 
-      {/* 時間軸 */}
       <Section title="時間軸" aside="左：計畫 · 右：實際">
         <div className="rounded-xl border border-line bg-surface p-3 pt-4">
           <DayTimeline
             date={today}
             tz={tz}
-            occurrences={dayOcc}
+            occurrences={todayOcc}
+            blocks={blocks.map((b) => ({ ...b, title: tasksById.get(b.taskId)?.title ?? '' }))}
             logs={logs}
             freeWindows={availability.windows}
             nowMs={nowMs}
@@ -245,22 +304,16 @@ export function DashboardPage() {
       <TaskForm open={creating} onClose={() => setCreating(false)} defaultDate={today} />
       <TaskForm open={editing !== null} onClose={() => setEditing(null)} task={editing ?? undefined} />
       <EventForm open={occEditing !== null} onClose={() => setOccEditing(null)} event={occForEdit} occurrence={occEditing ?? undefined} />
-
-      <Sheet open={incidentOpen} onClose={() => setIncidentOpen(false)} title="我遇到狀況了">
-        <p className="text-[15px]">動態調整面板（睡過頭、臨時有事、精力變差、提早完成、超時）會在第二階段啟用：系統會依現況重新計算可用時間，提出縮短、延後或不可行的候選方案，讓你預覽差異後再套用。</p>
-        <p className="mt-3 text-sm text-muted">現在可以先用這些手動方式：</p>
-        <ul className="mt-2 space-y-2 text-sm">
-          <li>・把做不到的任務往下延：點任務 → 改「哪天做」。</li>
-          <li>・臨時行程：到「日曆」新增固定行程，今天的可用時間會立刻重算。</li>
-          <li>・精力變差：在上方切換精力，「下一步」會優先避開高負荷任務並提示風險。</li>
-          <li>・提早做完：勾選完成，「下一步」會換成下一件事。</li>
-        </ul>
-        <div className="mt-4">
-          <Button full onClick={() => setIncidentOpen(false)}>
-            知道了
-          </Button>
-        </div>
-      </Sheet>
+      <IncidentSheet
+        open={incident !== null}
+        onClose={() => setIncident(null)}
+        today={today}
+        tz={tz}
+        tasks={tasks}
+        activeTaskId={running?.taskId}
+        buildProposal={buildProposal}
+        startWithReplan={incident?.replan}
+      />
     </div>
   );
 }

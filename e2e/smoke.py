@@ -29,7 +29,7 @@ with sync_playwright() as p:
     page.on("console", lambda m: errors.append(m.text) if m.type == "error" else None)
 
     page.goto(BASE)
-    page.wait_for_selector("text=下一步做什麼")
+    page.wait_for_selector("text=下一步（")
     page.screenshot(path=f"{SHOTS}/01-dashboard.png", full_page=True)
     check("Dashboard 顯示示範資料的下一步", page.locator("text=複習線性代數").count() > 0)
 
@@ -72,7 +72,7 @@ with sync_playwright() as p:
 
     # ---- 驗收 3：勾選完成 / 取消 ----
     page.click("a[href='#/']:visible")
-    page.wait_for_selector("text=下一步做什麼")
+    page.wait_for_selector("text=下一步（")
     before = page.locator("header").inner_text()
     m = re.search(r"已完成 (\d+) / (\d+)", before)
     done0, total0 = int(m.group(1)), int(m.group(2))
@@ -86,7 +86,7 @@ with sync_playwright() as p:
     page.locator("button[role='checkbox'][aria-checked='true']").first.click()
     page.wait_for_timeout(300)
     page.click("a[href='#/']:visible")
-    page.wait_for_selector("text=下一步做什麼")
+    page.wait_for_selector("text=下一步（")
     page.wait_for_timeout(300)
     again = page.locator("header").inner_text()
     m3 = re.search(r"已完成 (\d+) / (\d+)", again)
@@ -138,6 +138,41 @@ with sync_playwright() as p:
     check("紀錄 開始/結束", page.locator("text=E2E 計時").count() > 0)
     page.screenshot(path=f"{SHOTS}/06-log.png", full_page=True)
 
+    # ---- 第二階段：規劃今天 → 套用 → 狀況 → 撤銷 ----
+    page.click("a[href='#/']:visible")
+    page.wait_for_selector("text=下一步（建議")
+    page.click("button:has-text('規劃今天')")
+    page.wait_for_selector("text=重排預覽")
+    page.wait_for_selector("text=套用後的今日排程")
+    page.screenshot(path=f"{SHOTS}/09-proposal.png", full_page=True)
+    page.click("button:has-text('保留原計畫')")
+    page.wait_for_timeout(300)
+    check("驗收11 保留原計畫後沒有排程被寫入", page.locator("text=今日排程").count() == 0)
+    page.click("button:has-text('規劃今天')")
+    page.wait_for_selector("text=套用後的今日排程")
+    page.click("button:has-text('套用新計畫')")
+    page.wait_for_selector("h2:has-text('今日排程')")
+    page.wait_for_timeout(300)
+    check("驗收11 套用後出現今日排程與撤銷", page.locator("text=下一步（已套用的排程）").count() == 1 and page.locator("button:has-text('撤銷')").count() == 1)
+    page.screenshot(path=f"{SHOTS}/10-dashboard-planned.png", full_page=True)
+    # 臨時有事 15:00–17:00 之外再加一段，確認預覽顯示變更
+    page.click("button:has-text('我遇到狀況了')")
+    page.wait_for_selector("text=看看怎麼辦")
+    page.click("button:has-text('臨時有事')")
+    page.locator("div[role='dialog'] input[type='time']").nth(0).fill("10:00")
+    page.locator("div[role='dialog'] input[type='time']").nth(1).fill("12:00")
+    page.fill("input[placeholder='臨時有事']", "E2E 臨時行程")
+    page.click("button:has-text('看看怎麼辦')")
+    page.wait_for_selector("text=套用後的今日排程")
+    check("狀況預覽列出加入的固定行程", page.locator("text=加入固定行程「E2E 臨時行程」").count() == 1)
+    page.screenshot(path=f"{SHOTS}/11-incident-proposal.png", full_page=True)
+    page.click("button:has-text('套用新計畫')")
+    page.wait_for_timeout(400)
+    check("套用後臨時行程進入今天的固定行程", page.locator("text=E2E 臨時行程").count() >= 1)
+    page.click("button:has-text('撤銷')")
+    page.wait_for_timeout(400)
+    check("撤銷後臨時行程消失", page.locator("text=E2E 臨時行程").count() == 0)
+
     # ---- 設定頁與匯出 ----
     page.click("a[href='#/settings']:visible")
     page.wait_for_selector("text=每日時間")
@@ -161,7 +196,7 @@ with sync_playwright() as p:
     ctx2 = browser.new_context(viewport={"width": 1280, "height": 900}, locale="zh-TW", timezone_id="Asia/Taipei")
     pg2 = ctx2.new_page()
     pg2.goto(BASE)
-    pg2.wait_for_selector("text=下一步做什麼")
+    pg2.wait_for_selector("text=下一步（")
     pg2.screenshot(path=f"{SHOTS}/08-desktop.png", full_page=True)
     ctx2.close()
 

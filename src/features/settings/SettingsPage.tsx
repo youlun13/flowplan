@@ -145,6 +145,9 @@ export function SettingsPage() {
           <Field label="一次專注（分鐘）">
             <Input type="number" inputMode="numeric" min={10} max={240} step={5} value={draft.focusMinutes} onChange={(e) => set('focusMinutes', Number(e.target.value))} />
           </Field>
+          <Field label="區塊之間休息（分鐘）">
+            <Input type="number" inputMode="numeric" min={0} max={60} step={5} value={draft.breakMinutes} onChange={(e) => set('breakMinutes', Number(e.target.value))} />
+          </Field>
         </div>
         <div className="mt-3 flex items-center justify-between">
           <span className="text-sm text-muted">週起始日</span>
@@ -158,7 +161,7 @@ export function SettingsPage() {
 
       <section className="mt-4 rounded-xl border border-line bg-surface p-4">
         <h2 className="text-[15px] font-semibold">決策偏好</h2>
-        <p className="mt-0.5 text-xs text-muted">第二階段的完整規則引擎會讀取這些偏好；現在先保存。</p>
+        <p className="mt-0.5 text-xs text-muted">重新規劃時規則引擎會依這些偏好排序與拆分任務。</p>
         <div className="mt-2 divide-y divide-line">
           <Toggle checked={draft.preferDeadlineFirst} onChange={(v) => set('preferDeadlineFirst', v)} label="優先保住有截止時間的任務" />
           <Toggle checked={draft.energyMatching} onChange={(v) => set('energyMatching', v)} label="依精力狀態匹配任務" />

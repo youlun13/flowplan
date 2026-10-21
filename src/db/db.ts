@@ -21,6 +21,9 @@ export class FlowPlanDB extends Dexie {
       planRevisions: 'id, createdAt',
       settings: 'id',
     });
+    this.version(2).stores({
+      planRevisions: 'id, date, createdAt',
+    });
   }
 }
 

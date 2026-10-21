@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { cx } from './ui';
-import type { ActivityLog } from '@/db/schema';
+import type { ActivityLog, WorkBlock } from '@/db/schema';
 import type { Occurrence } from '@/engine/recurrence';
 import type { Interval } from '@/engine/intervals';
 import { dayEndMs, dayStartMs, formatDuration, formatTime, type LocalDate } from '@/lib/time';
@@ -11,6 +11,8 @@ interface Props {
   date: LocalDate;
   tz: string;
   occurrences: Occurrence[];
+  /** 已套用的工作區塊（計畫欄） */
+  blocks?: Array<WorkBlock & { title: string }>;
   logs?: ActivityLog[];
   freeWindows?: Interval[];
   nowMs?: number;
@@ -25,7 +27,7 @@ interface Props {
 /**
  * 一天的比例時間軸。左欄「計畫」= 硬性行程（實心）＋可用時段（虛線）；右欄「實際」= 紀錄。
  */
-export function DayTimeline({ date, tz, occurrences, logs, freeWindows, nowMs, rangeStartMin, rangeEndMin, onOccurrenceClick, onLogClick, onFreeClick }: Props) {
+export function DayTimeline({ date, tz, occurrences, blocks, logs, freeWindows, nowMs, rangeStartMin, rangeEndMin, onOccurrenceClick, onLogClick, onFreeClick }: Props) {
   const dayStart = dayStartMs(date, tz);
   const dayEnd = dayEndMs(date, tz);
 
@@ -37,6 +39,10 @@ export function DayTimeline({ date, tz, occurrences, logs, freeWindows, nowMs, r
       s = Math.min(s, toMin(o.startMs));
       e = Math.max(e, toMin(o.endMs));
     }
+    for (const b of blocks ?? []) {
+      s = Math.min(s, toMin(new Date(b.startAt).getTime()));
+      e = Math.max(e, toMin(new Date(b.endAt).getTime()));
+    }
     for (const l of logs ?? []) {
       s = Math.min(s, toMin(new Date(l.startAt).getTime()));
       e = Math.max(e, toMin(l.endAt ? new Date(l.endAt).getTime() : (nowMs ?? Date.now())));
@@ -44,7 +50,7 @@ export function DayTimeline({ date, tz, occurrences, logs, freeWindows, nowMs, r
     s = Math.floor(s / 60) * 60;
     e = Math.min(1440, Math.ceil(e / 60) * 60);
     return { startMin: s, endMin: Math.max(e, s + 60) };
-  }, [occurrences, logs, rangeStartMin, rangeEndMin, dayStart, nowMs]);
+  }, [occurrences, blocks, logs, rangeStartMin, rangeEndMin, dayStart, nowMs]);
 
   const height = (endMin - startMin) * PX_PER_MIN;
   const top = (ms: number) => (Math.max(dayStart, Math.min(dayEnd, ms)) - dayStart) / 60_000;
@@ -87,6 +93,29 @@ export function DayTimeline({ date, tz, occurrences, logs, freeWindows, nowMs, r
               </button>
             );
           })}
+          {blocks?.map((b) => {
+            const s = new Date(b.startAt).getTime();
+            const e = new Date(b.endAt).getTime();
+            const p = place(s, e);
+            const inactive = b.status === 'done' || b.status === 'skipped';
+            return (
+              <div
+                key={b.id}
+                className={cx('absolute inset-x-0 overflow-hidden rounded-md border px-1.5', p.height >= 22 && 'py-0.5', inactive ? 'border-line bg-surface-2 text-done' : 'border-accent bg-accent-soft text-accent')}
+                style={p}
+                title={`${b.title} ${formatTime(s, tz)}–${formatTime(e, tz)}`}
+                aria-label={`排程 ${b.title} ${formatTime(s, tz)}–${formatTime(e, tz)}`}
+              >
+                {p.height >= 22 && <div className={cx('truncate text-[12px] font-medium leading-4', inactive && 'line-through')}>{b.title}</div>}
+                {p.height > 30 && (
+                  <div className="text-[11px] leading-4 opacity-80 tnum">
+                    {formatTime(s, tz)}–{formatTime(e, tz)}
+                    {b.isMinimum && ' · 最低'}
+                  </div>
+                )}
+              </div>
+            );
+          })}
           {occurrences.map((o) => {
             const p = place(o.startMs, o.endMs);
             return (
@@ -94,10 +123,11 @@ export function DayTimeline({ date, tz, occurrences, logs, freeWindows, nowMs, r
                 key={o.id}
                 type="button"
                 onClick={() => onOccurrenceClick?.(o)}
-                className="absolute inset-x-0 overflow-hidden rounded-md bg-hard px-1.5 py-0.5 text-left text-white"
+                className={cx('absolute inset-x-0 overflow-hidden rounded-md bg-hard px-1.5 text-left text-white', p.height >= 22 && 'py-0.5')}
                 style={p}
+                title={`${o.title} ${formatTime(o.startMs, tz)}–${formatTime(o.endMs, tz)}`}
               >
-                <div className="truncate text-[12px] font-medium leading-4">{o.title}</div>
+                {p.height >= 22 && <div className="truncate text-[12px] font-medium leading-4">{o.title}</div>}
                 {p.height > 30 && (
                   <div className="text-[11px] leading-4 opacity-80 tnum">
                     {formatTime(o.startMs, tz)}–{formatTime(o.endMs, tz)}
@@ -121,12 +151,14 @@ export function DayTimeline({ date, tz, occurrences, logs, freeWindows, nowMs, r
                   type="button"
                   onClick={() => onLogClick?.(l)}
                   className={cx(
-                    'absolute inset-x-0 overflow-hidden rounded-md border-l-[3px] px-1.5 py-0.5 text-left',
+                    'absolute inset-x-0 overflow-hidden rounded-md border-l-[3px] px-1.5 text-left',
+                    p.height >= 22 && 'py-0.5',
                     l.endAt ? 'border-accent bg-accent-soft text-accent' : 'border-accent bg-accent text-accent-ink',
                   )}
                   style={p}
+                  title={`${l.title} ${formatTime(s, tz)}–${l.endAt ? formatTime(e, tz) : '進行中'}`}
                 >
-                  <div className="truncate text-[12px] font-medium leading-4">{l.title}</div>
+                  {p.height >= 22 && <div className="truncate text-[12px] font-medium leading-4">{l.title}</div>}
                   {p.height > 30 && (
                     <div className="text-[11px] leading-4 opacity-80 tnum">
                       {formatTime(s, tz)}–{l.endAt ? formatTime(e, tz) : '進行中'}
