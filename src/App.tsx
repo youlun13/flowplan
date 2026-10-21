@@ -10,24 +10,28 @@ import { TasksPage } from './features/tasks/TasksPage';
 import { LogPage } from './features/log/LogPage';
 import { SettingsPage } from './features/settings/SettingsPage';
 import { registerPwa } from './pwa';
-import { makeTransport, startAutoSync } from './sync/engine';
+import { makeTransport, startAutoSync, syncConfigured } from './sync/engine';
 import { useSettings } from './hooks/useSettings';
+import { useSession } from './hooks/useSession';
+import { AuthCallbackPage } from './features/auth/AuthCallbackPage';
 import { Button } from './components/ui';
 
-/** 設定裡開了同步就啟動自動同步；關掉就停 */
+/** 設定裡開了同步、且已登入或有通關密語，就啟動自動同步；關掉就停 */
 function SyncRunner() {
   const settings = useSettings();
-  const enabled = settings.sync.enabled && settings.sync.auto && Boolean(settings.ai.proxyUrl && settings.ai.proxySecret);
+  const session = useSession();
+  const enabled = settings.sync.enabled && settings.sync.auto && syncConfigured(settings);
   useEffect(() => {
     if (!enabled) return;
     const stop = startAutoSync(async () => {
       const { getSettings } = await import('./db/repo');
       const s = await getSettings();
-      if (!s.sync.enabled || !s.ai.proxyUrl || !s.ai.proxySecret) return null;
+      if (!s.sync.enabled || !syncConfigured(s)) return null;
       return makeTransport(s);
     });
     return stop;
-  }, [enabled]);
+    // session 變動（登入 / 登出）時重新評估
+  }, [enabled, session?.uid]);
   return null;
 }
 
@@ -89,6 +93,7 @@ export function App() {
             <Route path="tasks" element={<TasksPage />} />
             <Route path="log" element={<LogPage />} />
             <Route path="settings" element={<SettingsPage />} />
+            <Route path="auth" element={<AuthCallbackPage />} />
           </Route>
         </Routes>
       </HashRouter>

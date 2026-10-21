@@ -257,6 +257,9 @@ export const SyncMetaSchema = z.object({
   lastPushAt: IsoDateTime.optional(),
   lastError: z.string().optional(),
   deviceId: z.string(),
+  /** 這台裝置的資料屬於哪個登入帳號（多人模式）；通關密語模式為空 */
+  accountUid: z.string().optional(),
+  accountEmail: z.string().optional(),
 });
 export type SyncMeta = z.infer<typeof SyncMetaSchema>;
 

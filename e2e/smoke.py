@@ -201,6 +201,27 @@ with sync_playwright() as p:
         return route.fulfill(status=500, headers=cors, body="")
     page.route(WORKER + "/**", worker_route)
 
+    SESSION = "fake.session-token"
+    import time as _time
+    from urllib.parse import unquote
+    # 假的登入端點：真 Worker 會跳去 Google 再回來；這裡 start 直接當登入成功跳回 App
+    def auth_route(route, request):
+        cors = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "content-type": "application/json"}
+        if request.method == "OPTIONS":
+            return route.fulfill(status=204, headers=cors)
+        url = request.url
+        if url.endswith("/auth/providers"):
+            return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"providers": [{"id": "google", "label": "Google"}], "passphrase": True, "allowlist": True, "configuredProviders": 1}}))
+        if url.endswith("/auth/me"):
+            if request.headers.get("authorization") != f"Bearer {SESSION}":
+                return route.fulfill(status=401, headers=cors, body=json.dumps({"ok": False, "error": {"code": "session_expired", "message": "登入已失效"}}))
+            return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"uid": "google:1", "email": "friend@example.com", "name": "小明", "provider": "google", "exp": int(_time.time()) + 60 * 86400, "features": {"ai": True, "sync": True}}}))
+        if "/auth/google/start" in url:
+            redirect = unquote(url.split("redirect=", 1)[1])
+            return route.fulfill(status=302, headers={"Location": redirect + "#/auth?token=" + SESSION})
+        return route.fulfill(status=404, headers=cors, body="{}")
+    page.route(WORKER + "/auth/**", auth_route)
+
     # 無 AI 時規則解析可用（驗收 10）
     page.click("a[href='#/']:visible")
     page.wait_for_selector("text=下一步（")
@@ -269,26 +290,30 @@ with sync_playwright() as p:
     check("設定頁顯示今日用量", page.locator("text=/今天 [2-9] 次/").count() == 1)
 
     # ---- 第四階段：假 Worker 同步往返 + 週統計 ----
+    # 兩個空間：通關密語（擁有者）與登入者（假 session），對應真 Worker 的 `snapshot` / `u:<uid>:snapshot`
     cloud = {"snapshot": None}
+    user_cloud = {"snapshot": None}
+    spaces = {"Bearer e2e-secret": cloud, f"Bearer {SESSION}": user_cloud}
     def sync_route(route, request):
         cors = {"Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "Content-Type, Authorization", "Access-Control-Allow-Methods": "GET, POST, DELETE, OPTIONS", "content-type": "application/json"}
         if request.method == "OPTIONS":
             return route.fulfill(status=204, headers=cors)
-        if request.headers.get("authorization") != "Bearer e2e-secret":
+        store = spaces.get(request.headers.get("authorization") or "")
+        if store is None:
             return route.fulfill(status=401, headers=cors, body=json.dumps({"ok": False, "error": {"code": "unauthorized"}}))
         url = request.url
         if url.endswith("/v1/sync/status"):
-            snap = cloud["snapshot"]
+            snap = store["snapshot"]
             return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"configured": True, "version": snap["version"] if snap else 0, "updatedAt": None, "counts": {t: len(v) for t, v in snap["records"].items()} if snap else {}}}))
         if request.method == "GET":
-            snap = cloud["snapshot"]
+            snap = store["snapshot"]
             since = int(url.split("since=")[1]) if "since=" in url else -1
             if snap is None or snap["version"] <= since:
                 return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"unchanged": True, "version": snap["version"] if snap else 0}}))
             return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"snapshot": snap}}))
         if request.method == "POST":
             body = json.loads(request.post_data or "{}")
-            snap = cloud["snapshot"] or {"version": 0, "updatedAt": None, "records": {t: {} for t in ["tasks", "events", "logs", "dailyStates", "workBlocks", "planRevisions", "settings"]}, "tombstones": {}}
+            snap = store["snapshot"] or {"version": 0, "updatedAt": None, "records": {t: {} for t in ["tasks", "events", "logs", "dailyStates", "workBlocks", "planRevisions", "settings"]}, "tombstones": {}}
             for t, recs in (body.get("records") or {}).items():
                 snap["records"].setdefault(t, {}).update(recs)
             for k, v in (body.get("tombstones") or {}).items():
@@ -296,13 +321,14 @@ with sync_playwright() as p:
                 snap["records"].get(tbl, {}).pop(rid, None)
                 snap["tombstones"][k] = v
             snap["version"] += 1
-            cloud["snapshot"] = snap
+            store["snapshot"] = snap
             return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"snapshot": snap, "stats": {}}}))
         if request.method == "DELETE":
-            cloud["snapshot"] = None
+            store["snapshot"] = None
             return route.fulfill(status=200, headers=cors, body=json.dumps({"ok": True, "result": {"deleted": True}}))
         return route.fulfill(status=404, headers=cors, body="{}")
     page.route(WORKER + "/v1/sync**", sync_route)
+
 
     page.click("a[href='#/settings']:visible")
     page.wait_for_selector("text=跨裝置同步")
@@ -328,6 +354,31 @@ with sync_playwright() as p:
     page.click("a[href='#/tasks']:visible")
     page.wait_for_selector("text=E2E 來自另一台裝置")
     check("驗收 同步：另一台裝置的新任務拉回本機", True)
+
+    # ---- 多人登入：登入後憑證換成 session、資料推進自己的空間、擁有者空間不動 ----
+    owner_version_before = cloud["snapshot"]["version"]
+    page.click("a[href='#/settings']:visible")
+    page.wait_for_selector("h2:has-text('帳號')")
+    page.wait_for_selector("a[data-testid='login-google']")
+    check("設定頁依 Worker 回報顯示「用 Google 登入」", page.locator("a[data-testid='login-google']").count() == 1)
+    page.click("a[data-testid='login-google']")
+    page.wait_for_selector("text=friend@example.com")
+    check("登入回呼：/auth/me 驗證後顯示帳號", page.locator("text=小明").count() >= 1 and page.locator("text=已用 friend@example.com 登入").count() >= 1)
+    check("登入後不再要求通關密語", page.locator("input[type='password']").count() == 0)
+    page.wait_for_timeout(1500)
+    check("登入後本機資料推進登入者自己的空間", user_cloud["snapshot"] is not None and any(t.get("title") == "E2E 來自另一台裝置" for t in user_cloud["snapshot"]["records"]["tasks"].values()))
+    check("擁有者（通關密語）的空間沒被動到", cloud["snapshot"]["version"] == owner_version_before)
+    assert SESSION not in json.dumps(user_cloud["snapshot"]["records"].get("settings", {})), "settings 不應含登入 token"
+    page.screenshot(path=f"{SHOTS}/13-login.png", full_page=True)
+    # 登出：資料留著、同步關閉、回到登入按鈕
+    page.click("button:has-text('登出'):visible >> nth=0")
+    page.click("[role='alertdialog'] button:has-text('登出')")
+    page.wait_for_selector("a[data-testid='login-google']")
+    check("登出後回到登入按鈕，資料仍在", page.locator("a[data-testid='login-google']").count() == 1 and page.locator("button[role='switch']:has-text('啟用同步')[aria-checked='false']").count() == 1)
+    # 重新用通關密語模式把同步打開，讓後面的流程照舊
+    page.click("button[role='switch']:has-text('啟用同步')")
+    page.click("button:has-text('儲存設定')")
+    page.wait_for_timeout(300)
 
     # 週統計
     page.click("a[href='#/log']:visible")

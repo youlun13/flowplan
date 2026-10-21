@@ -1,15 +1,22 @@
 /**
- * FlowPlan AI 代理（Cloudflare Worker，零相依）
+ * FlowPlan Worker（Cloudflare Worker，零相依）
  *
  * 職責：
  *  1. 保管 ANTHROPIC_API_KEY，瀏覽器永遠拿不到
- *  2. 驗證通關密語（FLOWPLAN_PROXY_SECRET）與 Origin allowlist
- *  3. 把「狀況解析」「方案解說」兩種請求轉成 Anthropic Messages API 呼叫，
- *     用 tool_use 強制結構化輸出
+ *  2. 驗證身分：通關密語（FLOWPLAN_PROXY_SECRET，單人模式）或登入 session（Google / GitHub，多人模式）
+ *  3. 把「狀況解析」「方案解說」兩種請求轉成 Anthropic Messages API 呼叫，用 tool_use 強制結構化輸出
  *  4. 把上游錯誤正規化成固定的 error code，讓 App 能明確降級
- *  5. （第四階段）/v1/sync：以 Cloudflare KV 做單一使用者的跨裝置同步，需綁定 FLOWPLAN_KV
+ *  5. /v1/sync：以 Cloudflare KV 做跨裝置同步，需綁定 FLOWPLAN_KV；每個登入者各自一塊空間
+ *  6. /auth/*：OAuth 登入（授權碼在 Worker 端換 token，Client Secret 不會到瀏覽器）
  *
  * 不做：寫資料、決定排程、改任務。那些都在 App 端的規則引擎與驗證器。
+ *
+ * 環境變數：
+ *   必要（擇一或兩者）：FLOWPLAN_PROXY_SECRET（通關密語）／ GOOGLE_CLIENT_ID+GOOGLE_CLIENT_SECRET 或 GITHUB_CLIENT_ID+GITHUB_CLIENT_SECRET
+ *   ALLOWED_ORIGINS   允許的 App 來源，逗號分隔
+ *   ALLOWED_USERS     允許登入的 email，逗號／空白分隔；沒設就不開放登入
+ *   FLOWPLAN_SESSION_SECRET  簽 session 用（沒設就退回用 FLOWPLAN_PROXY_SECRET）
+ *   ANTHROPIC_API_KEY、AI_MODEL、AI_MAX_OUTPUT_TOKENS、AI_DAILY_LIMIT_PER_USER（預設 60，需綁 KV 才會計數）
  */
 
 const DEFAULT_MODEL = 'claude-haiku-5-5';
@@ -18,6 +25,30 @@ const MAX_BODY_BYTES = 40_000;
 const UPSTREAM_TIMEOUT_MS = 25_000;
 const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
 const ANTHROPIC_VERSION = '2023-06-01';
+
+const SESSION_TTL_S = 60 * 24 * 3600; // 登入 60 天
+const SESSION_RENEW_AFTER_S = 7 * 24 * 3600; // /auth/me 超過 7 天就換發新 token
+const STATE_TTL_S = 10 * 60;
+const DEFAULT_AI_DAILY_LIMIT_PER_USER = 60;
+
+const PROVIDERS = {
+  google: {
+    label: 'Google',
+    authUrl: 'https://accounts.google.com/o/oauth2/v2/auth',
+    tokenUrl: 'https://oauth2.googleapis.com/token',
+    scope: 'openid email profile',
+    idEnv: 'GOOGLE_CLIENT_ID',
+    secretEnv: 'GOOGLE_CLIENT_SECRET',
+  },
+  github: {
+    label: 'GitHub',
+    authUrl: 'https://github.com/login/oauth/authorize',
+    tokenUrl: 'https://github.com/login/oauth/access_token',
+    scope: 'read:user user:email',
+    idEnv: 'GITHUB_CLIENT_ID',
+    secretEnv: 'GITHUB_CLIENT_SECRET',
+  },
+};
 
 const INCIDENT_TOOL = {
   name: 'report_incident',
@@ -66,21 +97,41 @@ export default {
     const origin = request.headers.get('Origin') || '';
     const allowedOrigins = parseList(env.ALLOWED_ORIGINS);
     const cors = corsHeaders(origin, allowedOrigins);
+    const url = new URL(request.url);
 
     if (request.method === 'OPTIONS') return new Response(null, { status: 204, headers: cors });
 
-    if (!env.FLOWPLAN_PROXY_SECRET) return json({ ok: false, error: { code: 'misconfigured', message: 'Worker 尚未設定 FLOWPLAN_PROXY_SECRET' } }, 500, cors);
+    // 登入相關路徑：/auth/providers 公開、/auth/:p/start 與 callback 是整頁跳轉、/auth/me 需 session
+    if (url.pathname.startsWith('/auth/')) return handleAuth(request, env, url, cors, allowedOrigins);
+
+    if (!env.FLOWPLAN_PROXY_SECRET && configuredProviders(env).length === 0) {
+      return json({ ok: false, error: { code: 'misconfigured', message: 'Worker 尚未設定 FLOWPLAN_PROXY_SECRET 或任何登入供應商' } }, 500, cors);
+    }
     if (origin && !allowedOrigins.includes(origin)) return json({ ok: false, error: { code: 'forbidden_origin', message: `來源 ${origin} 不在允許清單` } }, 403, cors);
 
-    const auth = request.headers.get('Authorization') || '';
-    if (!safeEqual(auth, `Bearer ${env.FLOWPLAN_PROXY_SECRET}`)) return json({ ok: false, error: { code: 'unauthorized', message: '通關密語不正確' } }, 401, cors);
+    const who = await authenticate(request, env);
+    if (!who.ok) return json({ ok: false, error: { code: who.code, message: who.message } }, who.status, cors);
+    const principal = who.principal;
 
-    const url = new URL(request.url);
     if (request.method === 'GET' && url.pathname === '/v1/health') {
-      return json({ ok: true, result: { hasKey: Boolean(env.ANTHROPIC_API_KEY), model: pickModel(env, undefined), allowedOrigins, sync: Boolean(env.FLOWPLAN_KV) } }, 200, cors);
+      return json(
+        {
+          ok: true,
+          result: {
+            hasKey: Boolean(env.ANTHROPIC_API_KEY),
+            model: pickModel(env, undefined),
+            allowedOrigins,
+            sync: Boolean(env.FLOWPLAN_KV),
+            auth: { passphrase: Boolean(env.FLOWPLAN_PROXY_SECRET), providers: configuredProviders(env).map((p) => p.id), allowlist: allowedUsers(env).size },
+            user: principal.kind === 'user' ? { uid: principal.uid, email: principal.email, name: principal.name, provider: principal.provider } : null,
+          },
+        },
+        200,
+        cors,
+      );
     }
     if (url.pathname.startsWith('/v1/sync')) {
-      const r = await handleSync(request, env, url, json, cors);
+      const r = await handleSync(request, env, url, json, cors, principal.space);
       if (r) return r;
     }
     if (request.method !== 'POST' || url.pathname !== '/v1/ai') return json({ ok: false, error: { code: 'not_found', message: '沒有這個路徑' } }, 404, cors);
@@ -123,6 +174,10 @@ export default {
       return json({ ok: false, error: { code: 'bad_request', message: '未知的 op' } }, 400, cors);
     }
 
+    // 伺服器端每人每日上限（App 端的上限只是客氣的提醒；這裡才是守住額度的地方）
+    const quota = await consumeDailyQuota(env, principal.uid);
+    if (!quota.ok) return json({ ok: false, error: { code: 'daily_limit', message: `今天的 AI 次數已達上限（${quota.limit}）` } }, 429, cors);
+
     const upstream = await callAnthropic(env.ANTHROPIC_API_KEY, upstreamBody);
     if (!upstream.ok) return json({ ok: false, error: upstream.error }, upstream.status, cors);
 
@@ -143,6 +198,264 @@ export default {
     return json({ ok: true, result: { text }, usage, model }, 200, cors);
   },
 };
+
+/* ------------------------------------ 身分 ------------------------------------ */
+
+const OWNER_SPACE = 'snapshot';
+
+function sessionSecret(env) {
+  return env.FLOWPLAN_SESSION_SECRET || env.FLOWPLAN_PROXY_SECRET || '';
+}
+
+function configuredProviders(env) {
+  return Object.entries(PROVIDERS)
+    .filter(([, p]) => env[p.idEnv] && env[p.secretEnv])
+    .map(([id, p]) => ({ id, label: p.label }));
+}
+
+function allowedUsers(env) {
+  return new Set(
+    String(env.ALLOWED_USERS || '')
+      .split(/[\s,;]+/)
+      .map((s) => s.trim().toLowerCase())
+      .filter(Boolean),
+  );
+}
+
+function spaceOf(uid) {
+  return `u:${uid}:snapshot`;
+}
+
+/**
+ * Authorization: Bearer <通關密語 | session token>
+ * 回傳 { ok, principal: { kind: 'owner' | 'user', uid, space, email?, name?, provider? } } 或 { ok:false, code, status, message }
+ */
+async function authenticate(request, env) {
+  const auth = request.headers.get('Authorization') || '';
+  const token = auth.startsWith('Bearer ') ? auth.slice(7).trim() : '';
+  if (!token) return { ok: false, code: 'unauthorized', status: 401, message: '缺少通關密語或登入' };
+  if (env.FLOWPLAN_PROXY_SECRET && safeEqual(token, env.FLOWPLAN_PROXY_SECRET)) {
+    return { ok: true, principal: { kind: 'owner', uid: 'owner', space: OWNER_SPACE } };
+  }
+  if (token.includes('.')) {
+    const session = await verifyToken(sessionSecret(env), token);
+    if (!session || session.t !== 'session') return { ok: false, code: 'session_expired', status: 401, message: '登入已失效，請重新登入' };
+    if (session.exp < nowSec()) return { ok: false, code: 'session_expired', status: 401, message: '登入已過期，請重新登入' };
+    if (!allowedUsers(env).has(String(session.email || '').toLowerCase())) return { ok: false, code: 'not_allowed', status: 403, message: '這個帳號不在允許清單' };
+    return { ok: true, principal: { kind: 'user', uid: session.uid, space: spaceOf(session.uid), email: session.email, name: session.name, provider: session.provider, session } };
+  }
+  return { ok: false, code: 'unauthorized', status: 401, message: '通關密語不正確' };
+}
+
+/**
+ * 路由：
+ *   GET /auth/providers              → { providers:[{id,label}], passphrase, allowlist }（公開）
+ *   GET /auth/:p/start?redirect=URL  → 302 到供應商（redirect 的 origin 必須在 ALLOWED_ORIGINS）
+ *   GET /auth/:p/callback?code&state → 換 token、查 email、對白名單、簽 session → 302 回 redirect#/auth?token=…
+ *   GET /auth/me                     → 驗證 session，回使用者資料與 Worker 功能；超過 7 天換發新 token
+ */
+async function handleAuth(request, env, url, cors, allowedOrigins) {
+  const origin = request.headers.get('Origin') || '';
+  if (origin && !allowedOrigins.includes(origin)) return json({ ok: false, error: { code: 'forbidden_origin', message: `來源 ${origin} 不在允許清單` } }, 403, cors);
+  const parts = url.pathname.split('/').filter(Boolean); // ['auth', ...]
+
+  if (request.method === 'GET' && parts[1] === 'providers' && parts.length === 2) {
+    const providers = allowedUsers(env).size > 0 && sessionSecret(env) ? configuredProviders(env) : [];
+    return json({ ok: true, result: { providers, passphrase: Boolean(env.FLOWPLAN_PROXY_SECRET), allowlist: allowedUsers(env).size > 0, configuredProviders: configuredProviders(env).length } }, 200, cors);
+  }
+
+  if (request.method === 'GET' && parts[1] === 'me' && parts.length === 2) {
+    const who = await authenticate(request, env);
+    if (!who.ok) return json({ ok: false, error: { code: who.code, message: who.message } }, who.status, cors);
+    const p = who.principal;
+    if (p.kind !== 'user') return json({ ok: false, error: { code: 'bad_request', message: '這不是登入 session' } }, 400, cors);
+    let token;
+    if (nowSec() - (p.session.iat || 0) > SESSION_RENEW_AFTER_S) token = await mintSession(env, p.session);
+    return json(
+      {
+        ok: true,
+        result: {
+          uid: p.uid,
+          email: p.email,
+          name: p.name,
+          provider: p.provider,
+          exp: p.session.exp,
+          token,
+          features: { ai: Boolean(env.ANTHROPIC_API_KEY), sync: Boolean(env.FLOWPLAN_KV) },
+        },
+      },
+      200,
+      cors,
+    );
+  }
+
+  const providerId = parts[1];
+  const provider = PROVIDERS[providerId];
+  const action = parts[2];
+  if (!provider || parts.length !== 3 || request.method !== 'GET') return json({ ok: false, error: { code: 'not_found', message: '沒有這個路徑' } }, 404, cors);
+  if (!env[provider.idEnv] || !env[provider.secretEnv]) return htmlError(`Worker 還沒設定 ${provider.label} 登入（${provider.idEnv} / ${provider.secretEnv}）`, 500);
+  if (allowedUsers(env).size === 0) return htmlError('Worker 還沒設定 ALLOWED_USERS，尚未開放登入', 500);
+  if (!sessionSecret(env)) return htmlError('Worker 還沒設定 FLOWPLAN_SESSION_SECRET（或 FLOWPLAN_PROXY_SECRET）', 500);
+
+  const callbackUrl = `${url.origin}/auth/${providerId}/callback`;
+
+  if (action === 'start') {
+    const redirect = normalizeRedirect(url.searchParams.get('redirect'), allowedOrigins);
+    if (!redirect) return htmlError('redirect 不在允許的 App 來源清單', 400);
+    const state = await signToken(sessionSecret(env), { t: 'state', p: providerId, r: redirect, n: randomId(), exp: nowSec() + STATE_TTL_S });
+    const params = new URLSearchParams({ client_id: env[provider.idEnv], redirect_uri: callbackUrl, response_type: 'code', scope: provider.scope, state });
+    if (providerId === 'google') params.set('prompt', 'select_account');
+    return Response.redirect(`${provider.authUrl}?${params.toString()}`, 302);
+  }
+
+  if (action === 'callback') {
+    const state = await verifyToken(sessionSecret(env), url.searchParams.get('state') || '');
+    if (!state || state.t !== 'state' || state.p !== providerId || state.exp < nowSec()) return htmlError('登入流程逾時或 state 不符，請回 App 重新登入', 400);
+    const redirect = normalizeRedirect(state.r, allowedOrigins);
+    if (!redirect) return htmlError('redirect 不在允許的 App 來源清單', 400);
+    const back = (query) => Response.redirect(`${redirect}#/auth?${new URLSearchParams(query).toString()}`, 302);
+
+    const providerError = url.searchParams.get('error');
+    if (providerError) return back({ error: 'login_cancelled', detail: providerError.slice(0, 100) });
+    const code = url.searchParams.get('code');
+    if (!code) return back({ error: 'login_failed', detail: 'missing code' });
+
+    let identity;
+    try {
+      identity = await fetchIdentity(providerId, provider, env, code, callbackUrl);
+    } catch (e) {
+      return back({ error: 'login_failed', detail: String(e && e.message ? e.message : e).slice(0, 120) });
+    }
+    if (!identity.email || identity.verified !== true) return back({ error: 'login_failed', detail: '這個帳號沒有已驗證的 email' });
+    if (!allowedUsers(env).has(identity.email.toLowerCase())) return back({ error: 'not_allowed', detail: identity.email });
+
+    const token = await mintSession(env, { uid: `${providerId}:${identity.id}`, email: identity.email.toLowerCase(), name: identity.name || '', provider: providerId });
+    return back({ token });
+  }
+  return json({ ok: false, error: { code: 'not_found', message: '沒有這個路徑' } }, 404, cors);
+}
+
+/** 把授權碼換成身分：{ id, email, verified, name } */
+async function fetchIdentity(providerId, provider, env, code, callbackUrl) {
+  const tokenRes = await fetch(provider.tokenUrl, {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded', accept: 'application/json', 'user-agent': 'flowplan-worker' },
+    body: new URLSearchParams({ code, client_id: env[provider.idEnv], client_secret: env[provider.secretEnv], redirect_uri: callbackUrl, grant_type: 'authorization_code' }).toString(),
+  });
+  const tokenData = await tokenRes.json().catch(() => null);
+  if (!tokenRes.ok || !tokenData || !tokenData.access_token) {
+    throw new Error(`${provider.label} 換發 token 失敗：${(tokenData && (tokenData.error_description || tokenData.error)) || tokenRes.status}`);
+  }
+  const bearer = { authorization: `Bearer ${tokenData.access_token}`, accept: 'application/json', 'user-agent': 'flowplan-worker' };
+
+  if (providerId === 'google') {
+    const r = await fetch('https://openidconnect.googleapis.com/v1/userinfo', { headers: bearer });
+    const u = await r.json().catch(() => null);
+    if (!r.ok || !u || !u.sub) throw new Error('Google 無法取得使用者資料');
+    return { id: String(u.sub), email: String(u.email || ''), verified: u.email_verified === true, name: String(u.name || '') };
+  }
+  if (providerId === 'github') {
+    const r = await fetch('https://api.github.com/user', { headers: { ...bearer, accept: 'application/vnd.github+json' } });
+    const u = await r.json().catch(() => null);
+    if (!r.ok || !u || u.id === undefined) throw new Error('GitHub 無法取得使用者資料');
+    const er = await fetch('https://api.github.com/user/emails', { headers: { ...bearer, accept: 'application/vnd.github+json' } });
+    const emails = (await er.json().catch(() => null)) || [];
+    const chosen = (Array.isArray(emails) ? emails : []).find((e) => e && e.verified && e.primary) || (Array.isArray(emails) ? emails : []).find((e) => e && e.verified);
+    return { id: String(u.id), email: chosen ? String(chosen.email) : '', verified: Boolean(chosen), name: String(u.name || u.login || '') };
+  }
+  throw new Error('未知的供應商');
+}
+
+async function mintSession(env, s) {
+  const iat = nowSec();
+  return signToken(sessionSecret(env), { t: 'session', v: 1, uid: s.uid, email: s.email, name: s.name || '', provider: s.provider, iat, exp: iat + SESSION_TTL_S });
+}
+
+/** 只接受 ALLOWED_ORIGINS 裡的 origin；去掉 hash，保留 path 與 query */
+function normalizeRedirect(raw, allowedOrigins) {
+  if (!raw) return null;
+  let u;
+  try {
+    u = new URL(raw);
+  } catch {
+    return null;
+  }
+  if (!allowedOrigins.includes(u.origin)) return null;
+  u.hash = '';
+  return u.toString();
+}
+
+async function consumeDailyQuota(env, uid) {
+  const kv = env.FLOWPLAN_KV;
+  const limit = intEnv(env.AI_DAILY_LIMIT_PER_USER, DEFAULT_AI_DAILY_LIMIT_PER_USER);
+  if (!kv) return { ok: true, limit };
+  const key = `ai:${uid}:${new Date().toISOString().slice(0, 10)}`;
+  const used = Number.parseInt((await kv.get(key)) || '0', 10) || 0;
+  if (used >= limit) return { ok: false, limit };
+  await kv.put(key, String(used + 1), { expirationTtl: 2 * 24 * 3600 });
+  return { ok: true, limit };
+}
+
+/* ------------------------------------ 簽章 ------------------------------------ */
+
+function nowSec() {
+  return Math.floor(Date.now() / 1000);
+}
+
+function randomId() {
+  const b = new Uint8Array(12);
+  crypto.getRandomValues(b);
+  return b64url(b);
+}
+
+function b64url(bytes) {
+  let s = '';
+  for (const x of bytes) s += String.fromCharCode(x);
+  return btoa(s).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+}
+
+function unb64url(s) {
+  const pad = s.length % 4 === 0 ? '' : '='.repeat(4 - (s.length % 4));
+  const bin = atob(s.replace(/-/g, '+').replace(/_/g, '/') + pad);
+  const out = new Uint8Array(bin.length);
+  for (let i = 0; i < bin.length; i++) out[i] = bin.charCodeAt(i);
+  return out;
+}
+
+async function hmac(secret, data) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(secret), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  const sig = await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(data));
+  return b64url(new Uint8Array(sig));
+}
+
+async function signToken(secret, payload) {
+  const body = b64url(new TextEncoder().encode(JSON.stringify(payload)));
+  return `${body}.${await hmac(secret, body)}`;
+}
+
+async function verifyToken(secret, token) {
+  if (!secret || typeof token !== 'string') return null;
+  const dot = token.indexOf('.');
+  if (dot <= 0) return null;
+  const body = token.slice(0, dot);
+  const sig = token.slice(dot + 1);
+  if (!safeEqual(sig, await hmac(secret, body))) return null;
+  try {
+    const parsed = JSON.parse(new TextDecoder().decode(unb64url(body)));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function htmlError(message, status) {
+  const page = `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>FlowPlan 登入</title><body style="font-family:system-ui;padding:24px;max-width:480px"><h1 style="font-size:18px">FlowPlan 登入失敗</h1><p>${escapeHtml(message)}</p><p style="color:#666;font-size:14px">請回到 App 重試；若持續失敗，請把這段訊息告訴 Worker 的擁有者。</p></body>`;
+  return new Response(page, { status, headers: { 'content-type': 'text/html; charset=utf-8', 'cache-control': 'no-store' } });
+}
+
+function escapeHtml(s) {
+  return String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}
 
 /* ------------------------------------ helpers ------------------------------------ */
 
@@ -271,9 +584,9 @@ function safeEqual(a, b) {
 
 /* ------------------------------------ 同步 ------------------------------------ */
 /**
- * 跨裝置同步（Cloudflare KV，單一使用者）。
+ * 跨裝置同步（Cloudflare KV）。
  *
- * 資料模型：KV 裡只有一把 key `snapshot`：
+ * 資料模型：每個「空間」一把 key（通關密語 → `snapshot`；登入者 → `u:<uid>:snapshot`）：
  *   { version, updatedAt, records: { tasks: {id: rec}, events, logs, dailyStates, workBlocks, planRevisions, settings }, tombstones: { "table:id": deletedAt } }
  *
  * 合併規則（確定性、可在客戶端重現）：
@@ -281,11 +594,10 @@ function safeEqual(a, b) {
  *   - tombstone 比該筆 updatedAt 新 → 視為刪除
  *   - 每次 push 成功 version +1；客戶端帶 baseVersion，伺服器無論如何都合併（不拒絕），回傳合併後的完整快照
  *
- * 不做：多使用者、加密（資料以明文存在你自己的 KV）、歷史版本。
+ * 不做：加密（資料以明文存在 KV）、歷史版本。
  */
 
 const SYNC_TABLES = ['tasks', 'events', 'logs', 'dailyStates', 'workBlocks', 'planRevisions', 'settings'];
-const KEY = 'snapshot';
 const MAX_PUSH_BYTES = 8_000_000;
 
 function emptySnapshot() {
@@ -349,8 +661,8 @@ function mergeSnapshot(base, changes) {
   return { snapshot: out, stats };
 }
 
-async function readSnapshot(kv) {
-  const raw = await kv.get(KEY, 'json');
+async function readSnapshot(kv, key) {
+  const raw = await kv.get(key, 'json');
   if (!raw || typeof raw !== 'object') return emptySnapshot();
   const snap = emptySnapshot();
   snap.version = Number.isFinite(raw.version) ? raw.version : 0;
@@ -367,24 +679,24 @@ function countRecords(snap) {
 }
 
 /**
- * 路由：
+ * 路由（space = 這個身分的 KV key）：
  *   GET    /v1/sync          → { ok, result: { snapshot } }（?since=<version>：若伺服器 version <= since 回 { unchanged: true, version }）
  *   POST   /v1/sync          → body { baseVersion, records, tombstones } → 合併、version+1 → { ok, result: { snapshot, stats } }
- *   DELETE /v1/sync          → 刪除雲端快照
+ *   DELETE /v1/sync          → 刪除這個空間的雲端快照
  *   GET    /v1/sync/status   → { ok, result: { configured, version, updatedAt, counts } }
  */
-async function handleSync(request, env, url, json, cors) {
+async function handleSync(request, env, url, json, cors, space) {
   const kv = env.FLOWPLAN_KV;
   if (url.pathname === '/v1/sync/status' && request.method === 'GET') {
     if (!kv) return json({ ok: true, result: { configured: false } }, 200, cors);
-    const snap = await readSnapshot(kv);
+    const snap = await readSnapshot(kv, space);
     return json({ ok: true, result: { configured: true, version: snap.version, updatedAt: snap.updatedAt, counts: countRecords(snap) } }, 200, cors);
   }
   if (url.pathname !== '/v1/sync') return null;
   if (!kv) return json({ ok: false, error: { code: 'sync_not_configured', message: 'Worker 尚未綁定 KV（FLOWPLAN_KV）' } }, 501, cors);
 
   if (request.method === 'GET') {
-    const snap = await readSnapshot(kv);
+    const snap = await readSnapshot(kv, space);
     const since = Number.parseInt(url.searchParams.get('since') ?? '', 10);
     if (Number.isFinite(since) && snap.version <= since) return json({ ok: true, result: { unchanged: true, version: snap.version } }, 200, cors);
     return json({ ok: true, result: { snapshot: snap } }, 200, cors);
@@ -400,23 +712,23 @@ async function handleSync(request, env, url, json, cors) {
       return json({ ok: false, error: { code: 'bad_request', message: '請求不是有效的 JSON' } }, 400, cors);
     }
     if (!body || typeof body !== 'object') return json({ ok: false, error: { code: 'bad_request', message: '缺少內容' } }, 400, cors);
-    const base = await readSnapshot(kv);
+    const base = await readSnapshot(kv, space);
     const { snapshot, stats } = mergeSnapshot(base, { records: body.records || {}, tombstones: body.tombstones || {} });
     const changed = stats.applied + stats.deleted > 0 || Object.keys(body.tombstones || {}).length > 0;
     if (changed) {
       snapshot.version = base.version + 1;
       snapshot.updatedAt = new Date().toISOString();
-      await kv.put(KEY, JSON.stringify(snapshot));
+      await kv.put(space, JSON.stringify(snapshot));
     }
     return json({ ok: true, result: { snapshot, stats } }, 200, cors);
   }
 
   if (request.method === 'DELETE') {
-    await kv.delete(KEY);
+    await kv.delete(space);
     return json({ ok: true, result: { deleted: true } }, 200, cors);
   }
 
   return json({ ok: false, error: { code: 'not_found', message: '沒有這個路徑' } }, 404, cors);
 }
 
-export { mergeSnapshot, emptySnapshot, SYNC_TABLES };
+export { mergeSnapshot, emptySnapshot, SYNC_TABLES, signToken, verifyToken };

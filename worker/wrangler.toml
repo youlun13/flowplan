@@ -1,4 +1,4 @@
-# Cloudflare Worker：FlowPlan 的 AI 代理（保管 Anthropic API key）
+# Cloudflare Worker：FlowPlan 的 AI 代理 + 同步 + 登入
 # 用 CLI 部署：cd worker && npx wrangler deploy
 # 用 dashboard 部署：把 src/index.js 整個貼進 Worker 編輯器即可，不需要這個檔。
 name = "flowplan-ai"
@@ -9,12 +9,21 @@ compatibility_date = "2026-10-01"
 ALLOWED_ORIGINS = "https://youlun13.github.io"
 AI_MODEL = "claude-haiku-5-5"
 AI_MAX_OUTPUT_TOKENS = "1024"
+# 多人模式：允許登入的 email（逗號分隔）。空的就不開放登入。
+ALLOWED_USERS = ""
+# 每個登入者（含通關密語擁有者）每天最多幾次 AI 呼叫；需綁 KV 才會計數
+AI_DAILY_LIMIT_PER_USER = "60"
 
-# 跨裝置同步（第四階段）：在 dashboard 建立 KV namespace 後填入 id；用 dashboard 綁定則不需要這段
+# 跨裝置同步：在 dashboard 建立 KV namespace 後填入 id；用 dashboard 綁定則不需要這段
 # [[kv_namespaces]]
 # binding = "FLOWPLAN_KV"
 # id = "<your-kv-namespace-id>"
 
 # Secrets（不要寫在這裡）：
 #   npx wrangler secret put ANTHROPIC_API_KEY
-#   npx wrangler secret put FLOWPLAN_PROXY_SECRET
+#   npx wrangler secret put FLOWPLAN_PROXY_SECRET      # 單人模式通關密語（可選）
+#   npx wrangler secret put FLOWPLAN_SESSION_SECRET    # 簽登入 session 用（沒設就用 FLOWPLAN_PROXY_SECRET）
+#   npx wrangler secret put GOOGLE_CLIENT_ID
+#   npx wrangler secret put GOOGLE_CLIENT_SECRET
+#   npx wrangler secret put GITHUB_CLIENT_ID           # 可選
+#   npx wrangler secret put GITHUB_CLIENT_SECRET       # 可選

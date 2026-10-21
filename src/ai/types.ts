@@ -47,6 +47,8 @@ export type AiErrorCode =
   | 'not_configured'
   | 'daily_limit'
   | 'unauthorized'
+  | 'session_expired'
+  | 'not_allowed'
   | 'forbidden_origin'
   | 'misconfigured'
   | 'invalid_key'
@@ -78,9 +80,11 @@ export class AiError extends Error {
 
 export const AI_ERROR_TEXT: Record<AiErrorCode, string> = {
   disabled: 'AI 助手已關閉',
-  not_configured: '還沒設定 Worker 網址或通關密語',
+  not_configured: '還沒設定 Worker 網址，或尚未登入 / 填通關密語',
   daily_limit: '今天的 AI 請求已達上限',
   unauthorized: 'Worker 拒絕：通關密語不正確',
+  session_expired: '登入已過期或失效，請到設定重新登入',
+  not_allowed: '這個帳號不在 Worker 的允許清單裡',
   forbidden_origin: 'Worker 拒絕：這個網址不在允許清單',
   misconfigured: 'Worker 還沒設定金鑰或密語',
   invalid_key: 'Anthropic 金鑰無效或已停用',

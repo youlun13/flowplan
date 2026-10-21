@@ -1,8 +1,9 @@
 /**
- * 透過 Cloudflare Worker 呼叫 Claude。瀏覽器只知道 Worker 網址與通關密語，從不接觸 API key。
+ * 透過 Cloudflare Worker 呼叫 Claude。瀏覽器只知道 Worker 網址與憑證（登入 token 或通關密語），從不接觸 API key。
  */
 import { z } from 'zod';
 import { AiError, ParsedIncidentSchema, type AiContext, type AiProvider, type AiUsage, type ExplainInput } from './types';
+import { dropSessionIfRejected } from '@/auth/session';
 
 const REQUEST_TIMEOUT_MS = 30_000;
 
@@ -16,7 +17,8 @@ const ProxyEnvelope = z.object({
 
 export interface ClaudeProxyConfig {
   proxyUrl: string;
-  proxySecret: string;
+  /** 登入 token 或通關密語 */
+  credential: string;
   model: string;
   maxOutputTokens: number;
   /** 測試用：自訂 fetch */
@@ -25,6 +27,9 @@ export interface ClaudeProxyConfig {
 
 const KNOWN_CODES = new Set([
   'unauthorized',
+  'session_expired',
+  'not_allowed',
+  'daily_limit',
   'forbidden_origin',
   'misconfigured',
   'invalid_key',
@@ -55,14 +60,14 @@ export class ClaudeProxyProvider implements AiProvider {
   }
 
   private async call(path: string, init: RequestInit): Promise<z.infer<typeof ProxyEnvelope>> {
-    if (!this.cfg.proxyUrl || !this.cfg.proxySecret) throw new AiError('not_configured');
+    if (!this.cfg.proxyUrl || !this.cfg.credential) throw new AiError('not_configured');
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
     let res: Response;
     try {
       res = await (this.cfg.fetchImpl ?? fetch)(`${this.base}${path}`, {
         ...init,
-        headers: { ...(init.headers ?? {}), Authorization: `Bearer ${this.cfg.proxySecret}`, 'content-type': 'application/json' },
+        headers: { ...(init.headers ?? {}), Authorization: `Bearer ${this.cfg.credential}`, 'content-type': 'application/json' },
         signal: controller.signal,
       });
     } catch (e) {
@@ -81,6 +86,7 @@ export class ClaudeProxyProvider implements AiProvider {
     if (!env.success) throw new AiError('bad_response');
     if (!env.data.ok) {
       const code = env.data.error?.code ?? 'unknown';
+      dropSessionIfRejected(code);
       throw new AiError(KNOWN_CODES.has(code) ? (code as AiError['code']) : 'unknown', env.data.error?.message);
       // 註：AiError 的 message 一律是 AI_ERROR_TEXT 的中文；上游訊息放在 detail
     }

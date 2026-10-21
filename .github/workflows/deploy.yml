@@ -29,6 +29,8 @@ jobs:
       - run: npm run build
         env:
           FLOWPLAN_BASE: /flowplan/
+          # 預設 Worker 網址（不是秘密；Worker 本身靠登入 / 通關密語保護）。換 Worker 就改這裡。
+          VITE_FLOWPLAN_PROXY_URL: https://flowplan-ai.allen-youlun.workers.dev
       - uses: actions/configure-pages@v5
         with:
           enablement: true

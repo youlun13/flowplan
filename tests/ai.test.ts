@@ -125,7 +125,7 @@ describe('AI 輸出 → 事件（驗收 9：拒絕虛構）', () => {
 });
 
 describe('ClaudeProxyProvider（驗收 9：非法 JSON / API 失敗）', () => {
-  const mk = (fetchImpl: typeof fetch) => new ClaudeProxyProvider({ proxyUrl: 'https://w.example', proxySecret: 's', model: 'claude-haiku-5-5', maxOutputTokens: 512, fetchImpl });
+  const mk = (fetchImpl: typeof fetch) => new ClaudeProxyProvider({ proxyUrl: 'https://w.example', credential: 's', model: 'claude-haiku-5-5', maxOutputTokens: 512, fetchImpl });
   const ctxAi = { now: '10:30', date: '2026-10-21', timeZone: TPE, workStart: '08:00', workEnd: '23:00', tasks: [], events: [] };
 
   it('Worker 回非法 JSON → bad_response', async () => {
@@ -145,7 +145,7 @@ describe('ClaudeProxyProvider（驗收 9：非法 JSON / API 失敗）', () => {
   it('網路失敗 → network；沒設定 → not_configured', async () => {
     const p = mk(vi.fn().mockRejectedValue(new TypeError('Failed to fetch')) as unknown as typeof fetch);
     await expect(p.parseIncident('x', ctxAi)).rejects.toMatchObject({ code: 'network' });
-    const q = new ClaudeProxyProvider({ proxyUrl: '', proxySecret: '', model: 'claude-haiku-5-5', maxOutputTokens: 512 });
+    const q = new ClaudeProxyProvider({ proxyUrl: '', credential: '', model: 'claude-haiku-5-5', maxOutputTokens: 512 });
     await expect(q.health()).rejects.toBeInstanceOf(AiError);
   });
   it('成功時帶回 usage 與 model，請求帶通關密語且不含任何 API key', async () => {

@@ -14,17 +14,97 @@ import { HelpSheet } from './HelpSheet';
 import { DEFAULT_MODEL, MODEL_PRICING, formatUsd } from '@/ai/pricing';
 import { makeProvider } from '@/ai/resolve';
 import { getUsage, totalUsage } from '@/db/usage';
-import { enqueueEverything, makeTransport, replaceWithRemote, runSync, refreshSyncStatus } from '@/sync/engine';
+import { enqueueEverything, makeTransport, replaceWithRemote, runSync, refreshSyncStatus, syncConfigured } from '@/sync/engine';
 import { useSyncStatus } from '@/hooks/useSync';
 import { todayLocal } from '@/lib/time';
+import { useSession } from '@/hooks/useSession';
+import { fetchProviders, loginUrl, proxyUrlOf, setSession, verifySessionToken, type ProvidersResult } from '@/auth/session';
+import { completeLogin, switchConflict } from '@/features/auth/AuthCallbackPage';
+import type { MeResult } from '@/auth/session';
+import { DEFAULT_PROXY_URL } from '@/config';
+import { LogIn, UserCircle2 } from 'lucide-react';
 
 export function SettingsPage() {
   const settings = useSettings();
   const toast = useToast();
+  const session = useSession();
   const [draft, setDraft] = useState<Settings>(settings);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [confirm, setConfirm] = useState<null | 'demo' | 'clear' | 'import' | 'replace-remote' | 'delete-remote'>(null);
+  const [confirm, setConfirm] = useState<null | 'demo' | 'clear' | 'import' | 'replace-remote' | 'delete-remote' | 'logout' | 'logout-wipe' | 'paste-switch'>(null);
+  const [pendingMe, setPendingMe] = useState<{ me: MeResult; previous: string } | null>(null);
+  const [providers, setProviders] = useState<ProvidersResult | 'loading' | { error: string } | null>(null);
+  const [pasteOpen, setPasteOpen] = useState(false);
+  const [pasteToken, setPasteToken] = useState('');
+  const [pasting, setPasting] = useState(false);
+  const proxyUrl = proxyUrlOf(draft, DEFAULT_PROXY_URL);
+  const configured = syncConfigured(draft);
+
+  // 有 Worker 網址就問它開放哪些登入方式（公開端點，不需要憑證）
+  useEffect(() => {
+    if (!proxyUrl || session) {
+      setProviders(null);
+      return;
+    }
+    let cancelled = false;
+    setProviders('loading');
+    const t = window.setTimeout(() => {
+      fetchProviders(proxyUrl)
+        .then((r) => {
+          if (!cancelled) setProviders(r);
+        })
+        .catch((e: unknown) => {
+          if (!cancelled) setProviders({ error: e instanceof Error ? e.message : '無法連線到 Worker' });
+        });
+    }, 400);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(t);
+    };
+  }, [proxyUrl, session]);
+
+  async function logout(wipe: boolean) {
+    setConfirm(null);
+    try {
+      if (wipe) {
+        await clearAllData();
+        setSession(null);
+        setDirty(false);
+        toast.show('已登出並清除此裝置資料');
+        return;
+      }
+      setSession(null);
+      await updateSettings({ sync: { ...settings.sync, enabled: false }, ai: { ...settings.ai, enabled: Boolean(settings.ai.proxySecret) && settings.ai.enabled } });
+      setDirty(false);
+      toast.show('已登出，資料仍留在這台裝置');
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : '登出失敗', 'danger');
+    }
+  }
+
+  async function pasteLogin() {
+    const token = pasteToken.trim();
+    if (!token || !proxyUrl) return;
+    setPasting(true);
+    try {
+      const me = await verifySessionToken(proxyUrl, token);
+      const previous = await switchConflict(me);
+      if (previous) {
+        setPendingMe({ me, previous });
+        setConfirm('paste-switch');
+        return;
+      }
+      const msg = await completeLogin(me, { wipeLocal: false });
+      setPasteOpen(false);
+      setPasteToken('');
+      setDirty(false);
+      toast.show(msg);
+    } catch (e) {
+      toast.show(e instanceof Error ? e.message : '登入碼無效', 'danger');
+    } finally {
+      setPasting(false);
+    }
+  }
   const syncStatus = useSyncStatus();
   const [syncBusy, setSyncBusy] = useState(false);
   const [cloudInfo, setCloudInfo] = useState<string | null>(null);
@@ -254,9 +334,64 @@ export function SettingsPage() {
       </section>
 
       <section className="mt-4 rounded-xl border border-line bg-surface p-4">
+        <h2 className="text-[15px] font-semibold">帳號</h2>
+        <p className="mt-0.5 text-xs text-muted">
+          用 Google 或 GitHub 登入後，AI 助手與跨裝置同步都不需要通關密語；你的資料存在 Worker 擁有者的 Cloudflare KV 裡，各帳號互不相見。只有被擁有者加進允許清單的 email 能登入。
+        </p>
+        {session ? (
+          <div className="mt-3">
+            <div className="flex items-center gap-3 rounded-lg bg-surface-2 px-3 py-2">
+              <UserCircle2 size={28} className="shrink-0 text-accent" />
+              <div className="min-w-0 flex-1">
+                <div className="truncate text-sm font-semibold">{session.name || session.email}</div>
+                <div className="truncate text-xs text-muted">
+                  {session.email} · {session.provider === 'google' ? 'Google' : 'GitHub'}
+                </div>
+                <div className="text-xs text-muted">登入有效至 {formatDateTimeZh(new Date(session.exp * 1000).toISOString(), settings.timeZone)}</div>
+              </div>
+            </div>
+            <div className="mt-3 flex flex-wrap gap-2">
+              <Button onClick={() => setConfirm('logout')}>登出</Button>
+              <Button variant="danger" onClick={() => setConfirm('logout-wipe')}>
+                登出並清除此裝置資料
+              </Button>
+            </div>
+            <p className="mt-2 text-xs text-muted">借別人的裝置用完請選「登出並清除」；自己的裝置只要「登出」，資料留著，下次登入同一個帳號會接著同步。</p>
+          </div>
+        ) : (
+          <div className="mt-3">
+            {!proxyUrl && <p className="text-xs text-warn">請先在下方「AI 助手」填 Worker 網址（擁有者會告訴你）。</p>}
+            {providers === 'loading' && <p className="text-xs text-muted">正在詢問 Worker 開放的登入方式…</p>}
+            {providers && typeof providers === 'object' && 'error' in providers && <p className="text-xs text-danger">無法取得登入方式：{providers.error}</p>}
+            {providers && typeof providers === 'object' && 'providers' in providers && (
+              <>
+                {providers.providers.length === 0 ? (
+                  <p className="text-xs text-muted">
+                    這個 Worker 沒有開放登入
+                    {providers.configuredProviders > 0 && !providers.allowlist ? '（已設定登入供應商，但 ALLOWED_USERS 還是空的）' : ''}；{providers.passphrase ? '請用下方的通關密語。' : '也沒有設定通關密語。'}
+                  </p>
+                ) : (
+                  <div className="flex flex-wrap gap-2">
+                    {providers.providers.map((p) => (
+                      <a key={p.id} href={loginUrl(proxyUrl, p.id)} className="inline-flex min-h-11 items-center gap-2 rounded-xl bg-accent px-4 text-sm font-semibold text-white active:opacity-80" data-testid={`login-${p.id}`}>
+                        <LogIn size={16} /> 用 {p.label} 登入
+                      </a>
+                    ))}
+                  </div>
+                )}
+              </>
+            )}
+            <button type="button" className="mt-3 text-xs text-muted underline" onClick={() => setPasteOpen(true)} disabled={!proxyUrl}>
+              已在別的瀏覽器登入？貼上登入碼
+            </button>
+          </div>
+        )}
+      </section>
+
+      <section className="mt-4 rounded-xl border border-line bg-surface p-4">
         <h2 className="text-[15px] font-semibold">AI 助手</h2>
         <p className="mt-0.5 text-xs text-muted">
-          把「用一句話描述狀況」交給 Claude 解析。關閉時一切照常：規則解析與表單永遠可用。金鑰只放在你的 Cloudflare Worker，這裡只存通關密語（備份時不會匯出）。設定步驟見 docs/API_SETUP.md。
+          把「用一句話描述狀況」交給 Claude 解析。關閉時一切照常：規則解析與表單永遠可用。金鑰只放在 Cloudflare Worker，這裡只存{session ? '登入狀態' : '通關密語'}（備份時不會匯出）。設定步驟見 docs/API_SETUP.md。
         </p>
         <div className="mt-2 divide-y divide-line">
           <Toggle checked={draft.ai.enabled} onChange={(v) => setAi({ enabled: v, provider: v ? 'claude' : draft.ai.provider })} label="啟用 AI 助手" />
@@ -280,17 +415,21 @@ export function SettingsPage() {
             </Select>
           </Field>
         </div>
-        <Field label="Worker 網址" className="mt-3">
-          <Input type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" placeholder="https://flowplan-ai.xxx.workers.dev" value={draft.ai.proxyUrl ?? ''} onChange={(e) => setAi({ proxyUrl: e.target.value.trim() })} />
+        <Field label="Worker 網址" hint={DEFAULT_PROXY_URL ? `留空就用預設：${DEFAULT_PROXY_URL}` : undefined} className="mt-3">
+          <Input type="url" inputMode="url" autoCapitalize="off" autoCorrect="off" placeholder={DEFAULT_PROXY_URL || 'https://flowplan-ai.xxx.workers.dev'} value={draft.ai.proxyUrl ?? ''} onChange={(e) => setAi({ proxyUrl: e.target.value.trim() })} />
         </Field>
-        <Field label="通關密語" hint="和 Worker 的 FLOWPLAN_PROXY_SECRET 一樣；不是 Anthropic API key" className="mt-3">
-          <div className="flex gap-2">
-            <Input type={showSecret ? 'text' : 'password'} autoCapitalize="off" autoCorrect="off" value={draft.ai.proxySecret ?? ''} onChange={(e) => setAi({ proxySecret: e.target.value })} className="flex-1" />
-            <Button onClick={() => setShowSecret((v) => !v)} className="shrink-0">
-              {showSecret ? '隱藏' : '顯示'}
-            </Button>
-          </div>
-        </Field>
+        {session ? (
+          <p className="mt-3 text-xs text-muted">已登入，不需要通關密語。</p>
+        ) : (
+          <Field label="通關密語（單人模式）" hint="和 Worker 的 FLOWPLAN_PROXY_SECRET 一樣；不是 Anthropic API key。有登入就不用填。" className="mt-3">
+            <div className="flex gap-2">
+              <Input type={showSecret ? 'text' : 'password'} autoCapitalize="off" autoCorrect="off" value={draft.ai.proxySecret ?? ''} onChange={(e) => setAi({ proxySecret: e.target.value })} className="flex-1" />
+              <Button onClick={() => setShowSecret((v) => !v)} className="shrink-0">
+                {showSecret ? '隱藏' : '顯示'}
+              </Button>
+            </div>
+          </Field>
+        )}
         <div className="mt-3 grid grid-cols-2 gap-3">
           <Field label="每日請求上限">
             <Input type="number" inputMode="numeric" min={0} max={1000} value={draft.ai.dailyLimit} onChange={(e) => setAi({ dailyLimit: Number(e.target.value) })} />
@@ -300,7 +439,7 @@ export function SettingsPage() {
           </Field>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button onClick={testConnection} disabled={testing || !draft.ai.proxyUrl || !draft.ai.proxySecret}>
+          <Button onClick={testConnection} disabled={testing || !configured}>
             {testing ? '測試中…' : '測試連線'}
           </Button>
           <span className="text-xs text-muted">
@@ -314,18 +453,18 @@ export function SettingsPage() {
       <section className="mt-4 rounded-xl border border-line bg-surface p-4">
         <h2 className="text-[15px] font-semibold">跨裝置同步</h2>
         <p className="mt-0.5 text-xs text-muted">
-          用同一個 Worker 與通關密語，把資料存一份在你自己的 Cloudflare KV（免費），iPhone 與電腦之間自動同步。需要先在 Worker 綁定 KV（見 docs/API_SETUP.md Part C）。資料以明文存在你的 KV；同一筆資料兩邊都改過時，以較新的為準。
+          用同一個 Worker，把資料存一份在 Cloudflare KV（免費），iPhone 與電腦之間自動同步。{session ? '已登入：資料存在你自己的帳號空間。' : '通關密語模式：需要先在 Worker 綁定 KV（見 docs/API_SETUP.md Part C）。'}資料以明文存在 KV；同一筆資料兩邊都改過時，以較新的為準。
         </p>
         <div className="mt-2 divide-y divide-line">
           <Toggle checked={draft.sync.enabled} onChange={(v) => setSync({ enabled: v })} label="啟用同步" />
           <Toggle checked={draft.sync.auto} onChange={(v) => setSync({ auto: v })} label="自動同步（有變更後幾秒推送、回到前景時拉取）" />
         </div>
-        {(!draft.ai.proxyUrl || !draft.ai.proxySecret) && <p className="mt-2 text-xs text-warn">請先在上方「AI 助手」填好 Worker 網址與通關密語（同步共用同一組）。</p>}
+        {!configured && <p className="mt-2 text-xs text-warn">請先登入，或在上方「AI 助手」填好 Worker 網址與通關密語（同步共用同一組）。</p>}
         <div className="mt-3 flex flex-wrap items-center gap-2">
-          <Button onClick={syncNowClick} disabled={syncBusy || !settings.sync.enabled || !settings.ai.proxyUrl || !settings.ai.proxySecret}>
+          <Button onClick={syncNowClick} disabled={syncBusy || !settings.sync.enabled || !syncConfigured(settings)}>
             {syncBusy ? '同步中…' : '立即同步'}
           </Button>
-          <Button onClick={checkCloud} disabled={syncBusy || !draft.ai.proxyUrl || !draft.ai.proxySecret}>
+          <Button onClick={checkCloud} disabled={syncBusy || !configured}>
             檢查雲端
           </Button>
           <span className="text-xs text-muted">
@@ -342,10 +481,10 @@ export function SettingsPage() {
         <details className="mt-3 text-sm">
           <summary className="cursor-pointer text-muted">進階：以雲端為準 / 刪除雲端資料</summary>
           <div className="mt-2 flex flex-wrap gap-2">
-            <Button variant="danger" onClick={() => setConfirm('replace-remote')} disabled={!settings.sync.enabled || !settings.ai.proxyUrl}>
+            <Button variant="danger" onClick={() => setConfirm('replace-remote')} disabled={!settings.sync.enabled || !syncConfigured(settings)}>
               以雲端為準覆蓋本機
             </Button>
-            <Button variant="danger" onClick={() => setConfirm('delete-remote')} disabled={!settings.ai.proxyUrl}>
+            <Button variant="danger" onClick={() => setConfirm('delete-remote')} disabled={!syncConfigured(settings)}>
               刪除雲端資料
             </Button>
           </div>
@@ -388,9 +527,64 @@ export function SettingsPage() {
         </div>
       </section>
 
-      <p className="mt-6 text-center text-xs text-muted">FlowPlan 0.1 · 第一階段 · 本機優先，零額外付費</p>
+      <p className="mt-6 text-center text-xs text-muted">FlowPlan 0.4 · 本機優先，零額外付費</p>
 
       <HelpSheet open={helpOpen} onClose={() => setHelpOpen(false)} />
+      <Sheet open={pasteOpen} onClose={() => setPasteOpen(false)} title="貼上登入碼">
+        <p className="mb-2 text-sm text-muted">在別的瀏覽器完成登入後，登入頁會顯示一段登入碼。貼到這裡就能在這個 App 裡登入（登入碼只存在這台裝置）。</p>
+        <Textarea value={pasteToken} onChange={(e) => setPasteToken(e.target.value)} rows={4} placeholder="貼上登入碼" autoCapitalize="off" autoCorrect="off" className="font-mono text-xs" />
+        <div className="mt-3 flex gap-2">
+          <Button variant="primary" onClick={pasteLogin} disabled={pasting || !pasteToken.trim()}>
+            {pasting ? '確認中…' : '登入'}
+          </Button>
+          <Button onClick={() => setPasteOpen(false)}>取消</Button>
+        </div>
+      </Sheet>
+      <Confirm
+        open={confirm === 'logout'}
+        title="登出？"
+        message="這台裝置的資料會留著，同步與 AI 會停用；下次用同一個帳號登入會接著同步。"
+        confirmLabel="登出"
+        onConfirm={() => logout(false)}
+        onCancel={() => setConfirm(null)}
+      />
+      <Confirm
+        open={confirm === 'logout-wipe'}
+        title="登出並清除此裝置資料？"
+        message="會刪掉這台裝置上的任務、行程、紀錄與設定。雲端資料不受影響，之後登入可再載回。還沒推送的變更會遺失。"
+        confirmLabel="登出並清除"
+        danger
+        onConfirm={() => logout(true)}
+        onCancel={() => setConfirm(null)}
+      />
+      <Confirm
+        open={confirm === 'paste-switch'}
+        title="改用另一個帳號？"
+        message={`這台裝置的資料屬於 ${pendingMe?.previous ?? ''}。改用 ${pendingMe?.me.email ?? ''} 會先清除本機資料，再從雲端載入。`}
+        confirmLabel="清除本機並切換"
+        danger
+        onConfirm={async () => {
+          setConfirm(null);
+          if (!pendingMe) return;
+          setPasting(true);
+          try {
+            const msg = await completeLogin(pendingMe.me, { wipeLocal: true });
+            setPasteOpen(false);
+            setPasteToken('');
+            setDirty(false);
+            toast.show(msg);
+          } catch (e) {
+            toast.show(e instanceof Error ? e.message : '切換失敗', 'danger');
+          } finally {
+            setPasting(false);
+            setPendingMe(null);
+          }
+        }}
+        onCancel={() => {
+          setConfirm(null);
+          setPendingMe(null);
+        }}
+      />
       <Sheet open={copyText !== null} onClose={() => setCopyText(null)} title="手動複製備份">
         <p className="mb-2 text-sm text-muted">這個環境不允許自動複製或下載。全選下方文字後複製，貼到任何筆記或檔案保存。</p>
         <Textarea readOnly value={copyText ?? ''} rows={12} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />

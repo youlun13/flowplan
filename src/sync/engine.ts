@@ -13,6 +13,8 @@ import Dexie from 'dexie';
 import { db } from '@/db/db';
 import type { Settings, SyncMeta, SyncQueueItem } from '@/db/schema';
 import { AiError } from '@/ai/types';
+import { credentialOf, dropSessionIfRejected, proxyUrlOf } from '@/auth/session';
+import { DEFAULT_PROXY_URL } from '@/config';
 import { newId } from '@/lib/id';
 import { nowIso } from '@/lib/time';
 
@@ -129,6 +131,16 @@ export async function pendingCount(): Promise<number> {
   return db.syncQueue.count();
 }
 
+/** 登入後記住這台裝置的資料屬於誰；換帳號時用來避免把 A 的資料推進 B 的空間 */
+export async function setSyncAccount(uid: string | undefined, email?: string): Promise<void> {
+  await setSyncMeta({ accountUid: uid, accountEmail: email });
+}
+
+/** 換到另一個雲端空間（例如從通關密語模式改成登入）：版本號歸零，之後第一次 pull 會拿整份快照 */
+export async function resetSyncVersion(): Promise<void> {
+  await setSyncMeta({ version: 0, lastPullAt: undefined, lastPushAt: undefined, lastError: undefined });
+}
+
 /* ------------------------------ 傳輸 ------------------------------ */
 
 export type PullResult = { unchanged: true; version: number } | { unchanged?: false; snapshot: Snapshot };
@@ -140,14 +152,19 @@ export interface SyncTransport {
   status(): Promise<{ configured: boolean; version?: number; updatedAt?: string | null; counts?: Record<string, number> }>;
 }
 
+/** 同步可用的前提：有 Worker 網址，而且已登入或有通關密語 */
+export function syncConfigured(settings: Settings): boolean {
+  return Boolean(proxyUrlOf(settings, DEFAULT_PROXY_URL) && credentialOf(settings));
+}
+
 export function makeTransport(settings: Settings, fetchImpl: typeof fetch = fetch): SyncTransport {
-  const base = (settings.ai.proxyUrl ?? '').replace(/\/+$/, '');
-  const secret = settings.ai.proxySecret ?? '';
+  const base = proxyUrlOf(settings, DEFAULT_PROXY_URL);
   async function call(path: string, init: RequestInit = {}): Promise<unknown> {
-    if (!base || !secret) throw new AiError('not_configured');
+    const credential = credentialOf(settings); // 每次呼叫重新取：登入 / 登出後不用重建 transport
+    if (!base || !credential) throw new AiError('not_configured');
     let res: Response;
     try {
-      res = await fetchImpl(`${base}${path}`, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${secret}`, 'content-type': 'application/json' } });
+      res = await fetchImpl(`${base}${path}`, { ...init, headers: { ...(init.headers ?? {}), Authorization: `Bearer ${credential}`, 'content-type': 'application/json' } });
     } catch {
       throw new AiError('network');
     }
@@ -161,8 +178,8 @@ export function makeTransport(settings: Settings, fetchImpl: typeof fetch = fetc
     if (!env || typeof env !== 'object' || env.ok !== true) {
       const code = env?.error?.code;
       if (code === 'sync_not_configured') throw new SyncError('sync_not_configured', 'Worker 還沒綁定 KV（FLOWPLAN_KV），請照 API_SETUP.md Part C 設定');
-      if (code === 'unauthorized') throw new AiError('unauthorized');
-      if (code === 'forbidden_origin') throw new AiError('forbidden_origin');
+      if (code) dropSessionIfRejected(code);
+      if (code === 'unauthorized' || code === 'session_expired' || code === 'not_allowed' || code === 'forbidden_origin') throw new AiError(code);
       throw new SyncError('sync_failed', env?.error?.message ?? '同步失敗');
     }
     return env.result;

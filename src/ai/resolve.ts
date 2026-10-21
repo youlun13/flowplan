@@ -15,6 +15,8 @@ import type { PlanProposal } from '@/engine/planner';
 import { getUsage, recordUsage } from '@/db/usage';
 import { isOpen } from '@/lib/select';
 import { formatTime, toLocalDate, toLocalTime } from '@/lib/time';
+import { credentialOf, proxyUrlOf } from '@/auth/session';
+import { DEFAULT_PROXY_URL } from '@/config';
 
 export const RULES_CONFIDENCE_THRESHOLD = 0.8;
 
@@ -30,7 +32,7 @@ export interface ResolveContext {
 export function aiReady(settings: Settings): { ok: true } | { ok: false; code: AiError['code'] } {
   if (!settings.ai.enabled) return { ok: false, code: 'disabled' };
   if (settings.ai.provider !== 'claude') return { ok: false, code: 'disabled' };
-  if (!settings.ai.proxyUrl || !settings.ai.proxySecret) return { ok: false, code: 'not_configured' };
+  if (!proxyUrlOf(settings, DEFAULT_PROXY_URL) || !credentialOf(settings)) return { ok: false, code: 'not_configured' };
   return { ok: true };
 }
 
@@ -52,8 +54,8 @@ export function buildAiContext(ctx: ResolveContext): AiContext {
 
 export function makeProvider(settings: Settings, fetchImpl?: typeof fetch): ClaudeProxyProvider {
   return new ClaudeProxyProvider({
-    proxyUrl: settings.ai.proxyUrl ?? '',
-    proxySecret: settings.ai.proxySecret ?? '',
+    proxyUrl: proxyUrlOf(settings, DEFAULT_PROXY_URL),
+    credential: credentialOf(settings),
     model: settings.ai.model ?? 'claude-haiku-5-5',
     maxOutputTokens: settings.ai.maxOutputTokens,
     fetchImpl,
