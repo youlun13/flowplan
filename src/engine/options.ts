@@ -1,22 +1,46 @@
 /**
  * 把規則引擎的結果包成「現在要做什麼」的兩個選擇：
- *   A：規則引擎的建議（下一步 = 排序最前的任務）
- *   B：改先做排序第二的任務，其餘依規則重排
- * 兩者結果一樣（或沒有第二個候選）就只給一個。純函數。
+ *   A「拚了」：規則引擎的建議——直接做最重要（通常也最難）的那件
+ *   B「先喘口氣」：先休息幾分鐘站起來動一動，回來先做最輕鬆的那件，其餘依規則重排
+ * 純函數；沒有任務可排時只給 A。
  */
-import type { PlanProposal } from './planner';
+import type { PlanProposal, ProposedBlock } from './planner';
+import type { Task } from '@/db/schema';
 import { formatDuration, formatTime } from '@/lib/time';
+
+export const BREAK_MINUTES = 15;
+
+export interface OptionLead {
+  title: string;
+  startMs: number;
+  endMs: number;
+  /** 一句話：為什麼 / 做什麼 */
+  note: string;
+  kind: 'task' | 'rest';
+  isMinimum?: boolean;
+}
 
 export interface PlanOption {
   key: 'A' | 'B';
-  /** 卡片上的小標 */
+  /** 卡片小標：拚了 / 先喘口氣 */
   label: string;
   proposal: PlanProposal;
+  /** 卡片主區：現在立刻做的事（任務或休息） */
+  lead: OptionLead;
+  /** 休息完接著做的事（只有 B 有） */
+  then?: OptionLead;
   /** 這個選擇對其他事情的影響，一句話 */
   consequence: string;
   /** 之後接著做什麼（最多三件） */
   after: string;
 }
+
+export interface BuildArgs {
+  pinFirstTaskId?: string;
+  restFirstMinutes?: number;
+}
+
+const ENERGY_RANK = { low: 0, medium: 1, high: 2 } as const;
 
 export function consequenceOf(p: PlanProposal): string {
   const parts: string[] = [];
@@ -44,16 +68,52 @@ export function afterOf(p: PlanProposal, tz: string): string {
   return rest.length > 3 ? `${shown}…（共 ${rest.length} 件）` : shown;
 }
 
-export function buildOptions(build: (pinFirstTaskId?: string) => PlanProposal, tz: string): PlanOption[] {
+function leadOfBlock(b: ProposedBlock, note: string): OptionLead {
+  return { title: b.title, startMs: b.startMs, endMs: b.endMs, note, kind: 'task', isMinimum: b.isMinimum };
+}
+
+/** 最輕鬆的候選：精力需求最低，再比預估時間最短 */
+export function lightestTask(ranked: string[], tasks: Task[]): Task | undefined {
+  const byId = new Map(tasks.map((t) => [t.id, t]));
+  const cands = ranked.map((id) => byId.get(id)).filter((t): t is Task => Boolean(t) && t!.status !== 'in_progress');
+  if (cands.length === 0) return undefined;
+  return cands.slice().sort((a, b) => ENERGY_RANK[a.energyRequired] - ENERGY_RANK[b.energyRequired] || a.estimatedMinutes - b.estimatedMinutes)[0];
+}
+
+export function buildOptions(build: (args?: BuildArgs) => PlanProposal, ctx: { tz: string; tasks: Task[]; nowMs: number; alreadyResting?: boolean }): PlanOption[] {
+  const { tz, tasks, nowMs } = ctx;
   const a = build();
-  const options: PlanOption[] = [{ key: 'A', label: '建議', proposal: a, consequence: consequenceOf(a), after: afterOf(a, tz) }];
-  const firstId = a.nextAction?.block.taskId;
-  if (!firstId) return options;
-  const altId = a.ranked.find((id) => id !== firstId);
-  if (!altId) return options;
-  const b = build(altId);
-  if (!b.nextAction || b.nextAction.block.taskId === firstId) return options;
-  options.push({ key: 'B', label: '另一個選擇', proposal: b, consequence: consequenceOf(b), after: afterOf(b, tz) });
+  const options: PlanOption[] = [];
+  if (a.nextAction) {
+    options.push({ key: 'A', label: '拚了', proposal: a, lead: leadOfBlock(a.nextAction.block, a.nextAction.reason), consequence: consequenceOf(a), after: afterOf(a, tz) });
+  } else {
+    options.push({ key: 'A', label: '建議', proposal: a, lead: { title: '今天沒有可以安排的任務', startMs: nowMs, endMs: nowMs, note: '', kind: 'task' }, consequence: consequenceOf(a), after: '' });
+    return options;
+  }
+
+  // B：先休息，再做最輕鬆的
+  const light = lightestTask(a.ranked, tasks);
+  const restMinutes = ctx.alreadyResting ? 0 : BREAK_MINUTES;
+  const b = build({ pinFirstTaskId: light?.id, restFirstMinutes: restMinutes || undefined });
+  if (!b.nextAction) return options;
+  const sameAsA = restMinutes === 0 && b.nextAction.block.taskId === a.nextAction.block.taskId;
+  if (sameAsA) return options;
+
+  const lightNote = light && light.id === b.nextAction.block.taskId ? (ENERGY_RANK[light.energyRequired] === 0 ? '最不花腦力的一件' : `手上最輕鬆的一件（${formatDuration(light.estimatedMinutes)}）`) : b.nextAction.reason;
+  const then = leadOfBlock(b.nextAction.block, lightNote);
+  if (restMinutes > 0) {
+    options.push({
+      key: 'B',
+      label: '先喘口氣',
+      proposal: b,
+      lead: { title: `先休息 ${restMinutes} 分鐘`, startMs: nowMs, endMs: nowMs + restMinutes * 60_000, note: '站起來動一動、喝口水，回來再做', kind: 'rest' },
+      then,
+      consequence: consequenceOf(b),
+      after: afterOf(b, tz),
+    });
+  } else {
+    options.push({ key: 'B', label: '先做輕鬆的', proposal: b, lead: then, consequence: consequenceOf(b), after: afterOf(b, tz) });
+  }
   return options;
 }
 

@@ -17,7 +17,6 @@ import {
   updateTask,
 } from '@/db/repo';
 import { exportBackupJson, importBackup, parseBackup } from '@/db/backup';
-import { loadDemoDataIfEmpty } from '@/db/seed';
 import { expandEvents } from '@/engine/recurrence';
 import { addLocalDays, localDateTimeToIso, todayLocal } from '@/lib/time';
 
@@ -152,17 +151,16 @@ describe('備份', () => {
   });
 });
 
-describe('示範資料', () => {
-  it('首次載入，再一鍵刪除後資料庫為空', async () => {
-    expect(await loadDemoDataIfEmpty(TPE)).toBe(true);
-    expect(await db.tasks.count()).toBeGreaterThan(0);
-    expect(await loadDemoDataIfEmpty(TPE)).toBe(false);
+describe('舊版殘留的示範資料', () => {
+  it('不再自動載入；舊資料標 isDemo 的仍可一鍵刪除，自己的資料不受影響；hasNoOwnData 忽略示範資料', async () => {
+    const { hasNoOwnData } = await import('@/db/repo');
+    expect(await hasNoOwnData()).toBe(true);
+    await createTask({ title: '舊示範', plannedDate: '2026-10-21', isDemo: true } as never);
+    expect(await hasNoOwnData()).toBe(true);
+    await createTask({ title: '自己的', plannedDate: '2026-10-21' });
+    expect(await hasNoOwnData()).toBe(false);
     await deleteDemoData();
-    expect(await db.tasks.count()).toBe(0);
-    expect(await db.events.count()).toBe(0);
-    expect(await db.logs.count()).toBe(0);
-    // 刪除後不會再自動載入
-    expect(await loadDemoDataIfEmpty(TPE)).toBe(false);
+    expect((await db.tasks.toArray()).map((t) => t.title)).toEqual(['自己的']);
   });
 });
 

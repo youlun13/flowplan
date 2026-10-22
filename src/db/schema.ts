@@ -196,6 +196,8 @@ export const SettingsSchema = z.object({
   useCalibration: z.boolean().default(true),
   /** 已經過了第一次打開的歡迎畫面（選了登入或本機使用）；清除全部資料後會再出現 */
   onboarded: z.boolean().default(false),
+  /** 看過（或略過）第一次使用的導覽 */
+  tourDone: z.boolean().default(false),
   demoDataLoaded: z.boolean(),
   firstUsedAt: IsoDateTime.optional(),
   lastBackupAt: IsoDateTime.optional(),
@@ -239,6 +241,7 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     sync: { enabled: false, auto: true },
     useCalibration: true,
     onboarded: false,
+    tourDone: false,
     demoDataLoaded: false,
     firstUsedAt: now,
     backupReminderDays: 7,

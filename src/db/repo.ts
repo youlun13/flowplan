@@ -373,8 +373,8 @@ export async function deleteDemoData(): Promise<void> {
   });
 }
 
-/** 這台裝置除了示範資料之外什麼都沒有（登入既有帳號時用來判斷要不要直接以雲端為準） */
-export async function hasOnlyDemoData(): Promise<boolean> {
+/** 這台裝置沒有自己的資料（舊版留下的示範資料不算）；歡迎畫面與「登入既有帳號時以雲端為準」用 */
+export async function hasNoOwnData(): Promise<boolean> {
   const [tasks, events, logs] = await Promise.all([
     db.tasks.filter((t) => !t.isDemo).count(),
     db.events.filter((e) => !e.isDemo).count(),

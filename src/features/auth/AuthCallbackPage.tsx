@@ -12,7 +12,7 @@ import { Button } from '@/components/ui';
 import { PageHeader } from '@/components/AppShell';
 import { LOGIN_ERROR_TEXT, proxyUrlOf, setSession, verifySessionToken, type MeResult } from '@/auth/session';
 import { DEFAULT_PROXY_URL } from '@/config';
-import { clearAllData, countAll, deleteDemoData, getSettings, hasOnlyDemoData, updateSettings } from '@/db/repo';
+import { clearAllData, countAll, deleteDemoData, getSettings, hasNoOwnData, updateSettings } from '@/db/repo';
 import { cloudHasData, enqueueEverything, getSyncMeta, makeTransport, replaceWithRemote, resetSyncVersion, runSync, setSyncAccount } from '@/sync/engine';
 import { useToast } from '@/hooks/useToast';
 
@@ -62,8 +62,8 @@ export async function completeLogin(me: MeResult, opts: { wipeLocal: boolean; fe
     if (sameAccount && !opts.wipeLocal) {
       how = 'continue';
     } else if (await cloudHasData(transport)) {
-      if (opts.wipeLocal || (await hasOnlyDemoData())) {
-        // 新裝置（或剛清過）：雲端才是本尊。示範資料不推上去，設定採雲端的
+      if (opts.wipeLocal || (await hasNoOwnData())) {
+        // 新裝置（或剛清過）：雲端才是本尊。舊版殘留的示範資料不推上去，設定採雲端的
         await deleteDemoData();
         await replaceWithRemote(transport, { preferRemoteSettings: true });
         how = 'adopt-cloud';

@@ -254,7 +254,15 @@ export function DashboardPage() {
         }
       >
         {remaining.length === 0 ? (
-          <Empty title="今天沒有未完成的任務" hint="從「任務」頁或上方「新增」加入今天要做的事" />
+          <Empty
+            title="今天還沒有任務"
+            hint="加一件今天要做的事，FlowPlan 就會告訴你現在該做什麼"
+            action={
+              <Button variant="primary" onClick={() => setCreating(true)} data-testid="dashboard-add-task">
+                <Plus size={16} /> 新增任務
+              </Button>
+            }
+          />
         ) : (
           <div className="rounded-xl border border-line bg-surface px-3">
             {remaining.map((t) => (

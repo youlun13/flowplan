@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildPlan, type PlannerInput, type PlannerSettings } from '@/engine/planner';
-import { buildOptions, consequenceOf, downsidesOf } from '@/engine/options';
+import { buildOptions, consequenceOf, downsidesOf, lightestTask, type BuildArgs } from '@/engine/options';
 import type { Task, WorkBlock } from '@/db/schema';
 import { localDateTimeToIso, localDateTimeToMs, toLocalTime } from '@/lib/time';
 
@@ -59,32 +59,57 @@ describe('pinFirstTaskId（方案 B 的底層）', () => {
   });
 });
 
-describe('buildOptions（現在要做什麼：兩個選擇）', () => {
-  const build = (extra: Partial<PlannerInput> = {}) => (pin?: string) => buildPlan(input({ tasks, ...extra, pinFirstTaskId: pin }));
+describe('buildOptions（現在要做什麼：拚了 / 先喘口氣）', () => {
+  const ctx = { tz: TPE, tasks, nowMs: ms('09:00') };
+  const build = (extra: Partial<PlannerInput> = {}) => (args?: BuildArgs) => buildPlan(input({ tasks, ...extra, ...(args ?? {}) }));
 
-  it('A 是建議，B 改先做排序第二的任務；各附影響與之後的安排', () => {
-    const opts = buildOptions(build(), TPE);
-    expect(opts.map((o) => o.key)).toEqual(['A', 'B']);
-    expect(opts[0].proposal.nextAction?.block.taskId).toBe('urgent');
-    expect(opts[1].proposal.nextAction?.block.taskId).toBe('read');
-    expect(opts[0].after).toContain('讀英文');
-    expect(opts[1].after).toContain('今天截止的報告');
-    expect(opts[0].consequence).toBe('其他事都排得下');
+  it('A 直接做最重要的；B 先休息 15 分鐘，回來先做最輕鬆的，其餘重排', () => {
+    const t = [
+      task({ id: 'urgent', title: '今天截止的報告', priority: 'P1', dueAt: iso('17:00'), estimatedMinutes: 90, energyRequired: 'high' }),
+      task({ id: 'read', title: '讀英文', priority: 'P2', estimatedMinutes: 45, energyRequired: 'medium' }),
+      task({ id: 'misc', title: '整理筆記', priority: 'P3', estimatedMinutes: 30, energyRequired: 'low' }),
+    ];
+    const opts = buildOptions((args) => buildPlan(input({ tasks: t, ...(args ?? {}) })), { ...ctx, tasks: t });
+    expect(opts.map((o) => [o.key, o.label])).toEqual([
+      ['A', '拚了'],
+      ['B', '先喘口氣'],
+    ]);
+    expect(opts[0].lead).toMatchObject({ kind: 'task', title: '今天截止的報告' });
+    expect(hm(opts[0].lead.startMs)).toBe('09:00');
+    const b = opts[1];
+    expect(b.lead).toMatchObject({ kind: 'rest', title: '先休息 15 分鐘' });
+    expect([hm(b.lead.startMs), hm(b.lead.endMs)]).toEqual(['09:00', '09:15']);
+    expect(b.then?.title).toBe('整理筆記'); // 精力需求最低的
+    expect(b.then!.startMs).toBeGreaterThanOrEqual(b.lead.endMs);
+    expect(b.proposal.busy.some((x) => x.kind === 'rest')).toBe(true);
+    // 休息完、輕鬆的做完，截止的報告仍在截止前排進去
+    const report = b.proposal.blocks.filter((x) => x.taskId === 'urgent');
+    expect(report.length).toBeGreaterThan(0);
+    expect(report.every((x) => x.endMs <= ms('17:00'))).toBe(true);
   });
 
-  it('只有一個候選任務時只給 A；沒有任務時 A 也沒有下一步', () => {
-    const one = buildOptions((pin) => buildPlan(input({ tasks: [tasks[0]], pinFirstTaskId: pin })), TPE);
-    expect(one).toHaveLength(1);
-    const none = buildOptions((pin) => buildPlan(input({ tasks: [], pinFirstTaskId: pin })), TPE);
+  it('使用者已經選「需要休息」時，B 不再多加休息，改成「先做輕鬆的」', () => {
+    const opts = buildOptions(build({ incident: { type: 'rest', minutes: 20 } }), { ...ctx, alreadyResting: true });
+    expect(opts[1]?.label).toBe('先做輕鬆的');
+    expect(opts[1]?.lead.kind).toBe('task');
+  });
+
+  it('沒有任務時只有 A 且沒有下一步', () => {
+    const none = buildOptions((args) => buildPlan(input({ tasks: [], ...(args ?? {}) })), { ...ctx, tasks: [] });
     expect(none).toHaveLength(1);
     expect(none[0].proposal.nextAction).toBeNull();
   });
 
   it('時間不夠時影響句會說有幾件排不下 / 趕不上截止', () => {
-    const late = buildOptions((pin) => buildPlan(input({ nowMs: ms('21:00'), tasks, pinFirstTaskId: pin })), TPE);
-    const a = late[0];
-    expect(consequenceOf(a.proposal)).toMatch(/趕不上截止|排不下/);
-    if (late[1]) expect(late[1].consequence).toMatch(/趕不上截止|排不下|最低版本|改時間|排得下/);
+    const late = buildOptions((args) => buildPlan(input({ nowMs: ms('21:00'), tasks, ...(args ?? {}) })), { ...ctx, nowMs: ms('21:00') });
+    expect(consequenceOf(late[0].proposal)).toMatch(/趕不上截止|排不下/);
+  });
+
+  it('lightestTask：精力最低優先，再比時間短', () => {
+    const t = [task({ id: 'a', title: 'a', energyRequired: 'high', estimatedMinutes: 10 }), task({ id: 'b', title: 'b', energyRequired: 'low', estimatedMinutes: 60 }), task({ id: 'c', title: 'c', energyRequired: 'low', estimatedMinutes: 20 })];
+    expect(lightestTask(['a', 'b', 'c'], t)?.id).toBe('c');
+    expect(lightestTask(['a'], t)?.id).toBe('a');
+    expect(lightestTask([], t)).toBeUndefined();
   });
 });
 

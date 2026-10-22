@@ -84,6 +84,8 @@ export interface PlannerInput {
   calibration?: { factor?: number; byEnergy: Partial<Record<Energy, { factor: number; samples: number }>> };
   /** 使用者指定「先做這個」：該任務排最前面，其他任務的既有區塊全部重排（方案 B 用） */
   pinFirstTaskId?: string;
+  /** 先休息幾分鐘再開始（方案「先喘口氣」用）；與 incident 疊加 */
+  restFirstMinutes?: number;
 }
 
 /* ------------------------------------ 輸出 ------------------------------------ */
@@ -309,6 +311,11 @@ export function buildPlan(input: PlannerInput): PlanProposal {
       case 'replan':
         break;
     }
+  }
+
+  if (input.restFirstMinutes && input.restFirstMinutes > 0) {
+    busy.push({ startMs: nowMs, endMs: nowMs + input.restFirstMinutes * 60_000, title: '休息、站起來動一動', kind: 'rest' });
+    explanation.push(`先休息 ${input.restFirstMinutes} 分鐘，之後再開始。`);
   }
 
   // 2. 可用時段（規則 1）

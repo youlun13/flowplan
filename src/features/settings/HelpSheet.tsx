@@ -1,4 +1,5 @@
-import { Sheet } from '@/components/ui';
+import { Button, Sheet } from '@/components/ui';
+import { updateSettings } from '@/db/repo';
 
 interface Topic {
   title: string;
@@ -10,8 +11,7 @@ const TOPICS: Topic[] = [
   {
     title: '第一次使用',
     items: [
-      '示範資料的標題都有「（示範）」，看懂每個區塊後到「設定 → 刪除示範資料」一鍵清掉。',
-      'iPhone：Safari 開啟後「分享 → 加入主畫面」，之後固定從主畫面開。Safari 分頁與主畫面 App 是兩份獨立資料。',
+            'iPhone：Safari 開啟後「分享 → 加入主畫面」，之後固定從主畫面開。Safari 分頁與主畫面 App 是兩份獨立資料。',
       '先到「設定」把可工作時段、睡眠保護、行程前後緩衝改成你的實際習慣，這些決定「可用時間」怎麼算。',
     ],
   },
@@ -36,7 +36,7 @@ const TOPICS: Topic[] = [
     items: [
       '可以先用一句話描述（例如「我睡到十一點」「下午三點到五點臨時有事」「線代習題寫完了」），按「解析」會先用內建規則理解；看不懂才會呼叫 AI（需在設定開啟）。理解結果會先給你確認，不會自動套用。',
       '也可以直接選一種狀況：睡過頭、臨時有事（套用後會加進日曆）、精力變化、提早完成、超時、需要休息、單純重排。',
-      '結果只回答「現在要做什麼」：「建議」與「另一個選擇」各一張卡片（做什麼、幾點、為什麼、之後接什麼、對其他事的影響），按「就這個」套用。想看再展開「細節」：套用後今日安排、缺點（做不完的、趕不上的、只做最低版本的、被改時間的）。',
+      '結果只回答「現在要做什麼」：「拚了」（直接做最重要的）與「先喘口氣」（休息 15 分鐘，回來先做最輕鬆的）各一張卡片，按「就這個」套用。想看再展開「細節」：套用後今日安排、缺點（做不完的、趕不上的、只做最低版本的、被改時間的）。',
       '預覽不改任何資料；「保留原計畫」什麼都不會動；套用後可按「撤銷」回到套用前（含加進去的行程與標記完成的任務）。',
       '規則固定不變：固定行程與睡眠永遠優先 → 截止風險 → 優先級 → 精力匹配 → 排不下就改排最低版本 → 還是排不下就明確列出，不會假裝排得下。',
     ],
@@ -79,8 +79,7 @@ const TOPICS: Topic[] = [
   {
     title: '登入與多人使用（選用）',
     items: [
-      '設定 → 帳號 → 「用 Google 登入」。登入後 AI 助手與跨裝置同步都不需要通關密語，資料存在你自己的帳號空間，別人看不到。新裝置登入時若雲端已有資料，會直接換成雲端的資料與設定（示範資料不會推上去）。',
-      '只有 Worker 擁有者加進允許清單的 email 能登入；不在清單會看到「不在允許清單」，請擁有者在 Cloudflare 的 ALLOWED_USERS 加上你的 email。',
+            '只有 Worker 擁有者加進允許清單的 email 能登入；不在清單會看到「不在允許清單」，請擁有者在 Cloudflare 的 ALLOWED_USERS 加上你的 email。',
       '登入有效 60 天，期間用 App 會自動延長。到期或擁有者換密鑰時會提示重新登入，本機資料不受影響。',
       '同一台裝置換帳號登入時，會先問要不要清除本機資料，避免把別人的資料推進你的空間。借用別人的裝置請用「登出並清除此裝置資料」。',
       '主畫面的 FlowPlan 登入時若停在瀏覽器畫面，登入頁會給一段「登入碼」，回 App → 設定 → 帳號 → 貼上即可。',
@@ -99,6 +98,16 @@ const TOPICS: Topic[] = [
 export function HelpSheet({ open, onClose }: { open: boolean; onClose: () => void }) {
   return (
     <Sheet open={open} onClose={onClose} title="使用說明">
+      <Button
+        full
+        className="mb-3"
+        onClick={async () => {
+          await updateSettings({ tourDone: false });
+          onClose();
+        }}
+      >
+        再看一次第一次使用的導覽
+      </Button>
       <div className="space-y-2">
         {TOPICS.map((t, i) => (
           <details key={t.title} open={i === 0} className="group rounded-xl border border-line bg-surface">

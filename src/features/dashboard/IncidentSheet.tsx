@@ -5,7 +5,7 @@ import { ProposalView } from './ProposalView';
 import { ENERGY_LABEL, type Energy, type Settings, type Task } from '@/db/schema';
 import { applyProposal } from '@/db/plan';
 import { INCIDENT_LABEL, type Incident, type PlanProposal } from '@/engine/planner';
-import { buildOptions, type PlanOption } from '@/engine/options';
+import { buildOptions, type BuildArgs, type PlanOption } from '@/engine/options';
 import type { Occurrence } from '@/engine/recurrence';
 import { aiReady, resolveIncidentText } from '@/ai/resolve';
 import { estimateCostUsd, formatUsd } from '@/ai/pricing';
@@ -28,7 +28,7 @@ export interface IncidentSheetProps {
   settings: Settings;
   energy?: Energy;
   activeTaskId?: string;
-  buildProposal: (incident?: Incident, pinFirstTaskId?: string) => PlanProposal;
+  buildProposal: (incident?: Incident, args?: BuildArgs) => PlanProposal;
   /** 直接以「重新規劃」開啟並跳到預覽 */
   startWithReplan?: boolean;
 }
@@ -77,7 +77,7 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
     setTaskId(activeTaskId ?? openTasks.find((x) => x.status === 'in_progress')?.id ?? openTasks[0]?.id ?? '');
     if (startWithReplan) {
       setKind('replan');
-      setOptions(buildOptions((pin) => buildProposal({ type: 'replan' }, pin), tz));
+      setOptions(buildOptions((args) => buildProposal({ type: 'replan' }, args), { tz, tasks, nowMs: Date.now() }));
     } else {
       setKind('overslept');
       setOptions(null);
@@ -143,7 +143,7 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
     try {
       const inc = incident ?? makeIncident();
       if ((inc.type === 'task_done' || inc.type === 'overrun') && !inc.taskId) throw new Error('請選擇任務');
-      setOptions(buildOptions((pin) => buildProposal(inc, pin), tz));
+      setOptions(buildOptions((args) => buildProposal(inc, args), { tz, tasks, nowMs: Date.now(), alreadyResting: inc.type === 'rest' }));
     } catch (e) {
       setError(e instanceof Error ? e.message : '無法產生方案');
     }

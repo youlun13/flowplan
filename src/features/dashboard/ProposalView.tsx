@@ -1,5 +1,5 @@
 import { useState } from 'react';
-import { AlertTriangle, Check, ChevronDown, ChevronUp } from 'lucide-react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp, Coffee } from 'lucide-react';
 import { Button, Chip, cx } from '@/components/ui';
 import type { PlanProposal } from '@/engine/planner';
 import { downsidesOf, type PlanOption } from '@/engine/options';
@@ -9,7 +9,8 @@ import { addLocalDays, formatDuration, formatTime } from '@/lib/time';
 
 /**
  * 重排結果：只回答「現在要做什麼」。
- * 一或兩張卡片（建議 / 另一個選擇），每張只有：做什麼、幾點到幾點、一句為什麼、「就這個」、「細節」。
+ * 兩張卡片：「拚了」（直接做最重要的）／「先喘口氣」（休息 15 分鐘，回來先做最輕鬆的）。
+ * 每張只有：做什麼、幾點到幾點、一句為什麼、「就這個」、「細節」。
  * 「細節」是明顯的按鈕，展開後只有兩樣：套用後今日安排、缺點。字都用正常大小。
  */
 export function ProposalView({ options, tz, onApply, onKeep, applying }: { options: PlanOption[]; tz: string; onApply: (p: PlanProposal) => void; onKeep: () => void; applying?: boolean }) {
@@ -43,33 +44,43 @@ export function ProposalView({ options, tz, onApply, onKeep, applying }: { optio
 
 function OptionCard({ option, tz, onPick, applying, recommended }: { option: PlanOption; tz: string; onPick: () => void; applying?: boolean; recommended: boolean }) {
   const p = option.proposal;
-  const next = p.nextAction;
   const [open, setOpen] = useState(false);
+  const lead = option.lead;
   return (
     <section className={cx('rounded-xl border p-4', recommended ? 'border-accent/60 bg-accent-soft' : 'border-line bg-surface')} data-testid={`option-${option.key}`}>
       <div className="flex flex-wrap items-center gap-2">
-        <span className={cx('text-[15px] font-semibold', recommended ? 'text-accent' : 'text-muted')}>{option.label}</span>
+        <span className={cx('text-[15px] font-semibold', recommended ? 'text-accent' : 'text-hard')}>{option.label}</span>
         {!p.feasible && (
           <Chip tone="danger" className="text-sm">
             有截止趕不上
           </Chip>
         )}
-        {next?.block.isMinimum && (
+        {lead.isMinimum && (
           <Chip tone="warn" className="text-sm">
             最低版本
           </Chip>
         )}
       </div>
-      {next ? (
-        <>
-          <div className="mt-2 text-[22px] font-semibold leading-tight">{next.block.title}</div>
-          <div className="mt-1.5 text-[17px] tnum">
-            {formatTime(next.block.startMs, tz)}–{formatTime(next.block.endMs, tz)} <span className="text-muted">· {formatDuration(next.block.minutes)}</span>
+      <div className="mt-2 flex items-start gap-2">
+        {lead.kind === 'rest' && <Coffee size={24} className="mt-1 shrink-0 text-hard" />}
+        <div className="min-w-0">
+          <div className="text-[22px] font-semibold leading-tight">{lead.title}</div>
+          {lead.endMs > lead.startMs && (
+            <div className="mt-1.5 text-[17px] tnum">
+              {formatTime(lead.startMs, tz)}–{formatTime(lead.endMs, tz)} <span className="text-muted">· {formatDuration(Math.round((lead.endMs - lead.startMs) / 60_000))}</span>
+            </div>
+          )}
+          {lead.note && <div className="mt-1 text-[15px] text-muted">{lead.note}</div>}
+        </div>
+      </div>
+      {option.then && (
+        <div className="mt-3 rounded-lg bg-surface/70 px-3 py-2">
+          <div className="text-[15px] text-muted">回來先做</div>
+          <div className="text-[17px] font-semibold leading-tight">{option.then.title}</div>
+          <div className="text-[15px] tnum">
+            {formatTime(option.then.startMs, tz)}–{formatTime(option.then.endMs, tz)} <span className="text-muted">· {option.then.note}</span>
           </div>
-          <div className="mt-1 text-[15px] text-muted">{next.reason}</div>
-        </>
-      ) : (
-        <div className="mt-2 text-[17px]">今天沒有可以安排的任務</div>
+        </div>
       )}
       <Button variant="primary" full className="mt-4 min-h-12 text-[17px]" onClick={onPick} disabled={applying}>
         <Check size={18} /> 就這個

@@ -3,8 +3,9 @@ import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-d
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AppShell } from './components/AppShell';
 import { ToastProvider } from './hooks/useToast';
-import { getSettings, hasOnlyDemoData } from './db/repo';
+import { getSettings, hasNoOwnData } from './db/repo';
 import { WelcomePage } from './features/welcome/WelcomePage';
+import { TourSheet } from './features/tour/TourSheet';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { CalendarPage } from './features/calendar/CalendarPage';
 import { TasksPage } from './features/tasks/TasksPage';
@@ -38,17 +39,22 @@ function SyncRunner() {
 
 /**
  * 第一次打開的門：這台裝置沒有自己的資料、沒登入、也還沒選過「本機使用」→ 先看歡迎畫面（登入 / 本機）。
- * 登入回呼頁永遠放行。示範資料不再在啟動時自動塞進去，由歡迎畫面的「本機使用」決定。
+ * 過了歡迎畫面、還沒看過導覽 → App 上面疊一層導覽。登入回呼頁永遠放行。沒有示範資料。
  */
 function Gate() {
   const settings = useSettings();
   const session = useSession();
   const location = useLocation();
-  const onlyDemo = useLiveQuery(() => hasOnlyDemoData(), []);
+  const empty = useLiveQuery(() => hasNoOwnData(), []);
   if (location.pathname === '/auth') return <AppRoutes />;
-  if (onlyDemo === undefined) return null;
-  if (!session && !settings.onboarded && onlyDemo) return <WelcomePage />;
-  return <AppRoutes />;
+  if (empty === undefined) return null;
+  if (!session && !settings.onboarded && empty) return <WelcomePage />;
+  return (
+    <>
+      <AppRoutes />
+      {!settings.tourDone && <TourSheet onDone={() => undefined} />}
+    </>
+  );
 }
 
 function AppRoutes() {

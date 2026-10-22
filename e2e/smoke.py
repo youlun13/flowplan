@@ -33,12 +33,35 @@ with sync_playwright() as p:
     check("第一次打開：先看到歡迎畫面（登入 / 本機），不會直接塞示範資料", page.locator("text=下一步（").count() == 0)
     page.screenshot(path=f"{SHOTS}/00-welcome.png", full_page=True)
     page.click("[data-testid='welcome-local']")
+    page.wait_for_selector("[data-testid='tour']")
+    check("第一次進入：出現導覽（不是示範資料）", page.locator("[data-testid='tour'] >> text=今日：現在該做什麼").count() == 1)
+    page.screenshot(path=f"{SHOTS}/00b-tour.png", full_page=True)
+    for _ in range(4):
+        page.click("[data-testid='tour-next']")
+        page.wait_for_timeout(150)
+    check("導覽最後一頁是「開始使用」", page.locator("[data-testid='tour-next']:has-text('開始使用')").count() == 1)
+    page.click("[data-testid='tour-next']")
+    page.wait_for_selector("[data-testid='dashboard-add-task']")
+    check("導覽結束後是空白的今日頁（沒有示範資料）", page.locator("text=今天還沒有任務").count() == 1 and page.locator("text=（示範）").count() == 0)
+    page.reload()
+    page.wait_for_selector("[data-testid='dashboard-add-task']")
+    check("重新整理不會再出現歡迎畫面或導覽", page.locator("[data-testid='welcome-local']").count() == 0 and page.locator("[data-testid='tour']").count() == 0)
+
+    # 從今日頁加三件今天的事（取代以前的示範資料）
+    def add_today(title, minutes, priority):
+        page.click("[data-testid='dashboard-add-task']") if page.locator("[data-testid='dashboard-add-task']").count() else page.click("button:has-text('新增') >> nth=0")
+        page.wait_for_selector("input[placeholder*='複習線代']")
+        page.fill("input[placeholder*='複習線代']", title)
+        page.fill("input[type='number'][min='5']", str(minutes))
+        page.click(f"div[role='dialog'] button[role='radio']:has-text('{priority}')")
+        page.click("div[role='dialog'] button:has-text('新增')")
+        page.wait_for_selector(f"text={title}")
+    add_today("E2E 讀書", 60, "高")
+    add_today("E2E 寫報告", 45, "中")
+    add_today("E2E 整理筆記", 30, "低")
     page.wait_for_selector("text=下一步（")
     page.screenshot(path=f"{SHOTS}/01-dashboard.png", full_page=True)
-    check("選「先在這台裝置使用」後載入示範資料", page.locator("text=複習線性代數").count() > 0)
-    page.reload()
-    page.wait_for_selector("text=下一步（")
-    check("重新整理不會再出現歡迎畫面", page.locator("[data-testid='welcome-local']").count() == 0)
+    check("加了任務後出現下一步", page.locator("text=下一步（").count() == 1)
 
     # ---- 驗收 1：新增明天的 TODO，重新整理後仍存在 ----
     page.click("a[href='#/tasks']:visible")
@@ -107,7 +130,7 @@ with sync_playwright() as p:
     d = int(tomorrow[8:])
     page.locator(f"button[aria-label*='{int(tomorrow[5:7])}月{d}日']").first.click()
     page.wait_for_timeout(300)
-    check("驗收4 切到明天看到明天的任務", page.locator("text=E2E 已改名").count() > 0 and page.locator("text=弦樂社社課").count() > 0)
+    check("驗收4 切到明天看到明天的任務", page.locator("text=E2E 已改名").count() > 0)
     page.click("button[role='radio']:has-text('日')")
     page.wait_for_timeout(300)
     page.screenshot(path=f"{SHOTS}/04-calendar-day.png", full_page=True)
@@ -418,13 +441,7 @@ with sync_playwright() as p:
     check("驗收12 匯出備份不含通關密語（更不含金鑰）", "e2e-secret" not in json.dumps(data) and data["settings"]["ai"].get("proxySecret") is None)
     page.screenshot(path=f"{SHOTS}/07-settings.png", full_page=True)
 
-    # ---- 刪除示範資料 ----
-    page.click("button:has-text('刪除示範資料')")
-    page.click("[role='alertdialog'] button:has-text('刪除示範資料')")
-    page.wait_for_timeout(400)
-    page.click("a[href='#/tasks']:visible")
-    page.wait_for_timeout(300)
-    check("刪除示範資料後自己新增的任務仍在", page.locator("text=E2E 已改名").count() > 0 and page.locator("text=複習線性代數").count() == 0)
+    check("沒有示範資料就不會出現「刪除示範資料」", page.locator("button:has-text('刪除示範資料')").count() == 0)
 
     # 桌機尺寸
     ctx2 = browser.new_context(viewport={"width": 1280, "height": 900}, locale="zh-TW", timezone_id="Asia/Taipei")
@@ -432,7 +449,10 @@ with sync_playwright() as p:
     pg2.goto(BASE)
     pg2.wait_for_selector("[data-testid='welcome-local']")
     pg2.click("[data-testid='welcome-local']")
-    pg2.wait_for_selector("text=下一步（")
+    pg2.wait_for_selector("[data-testid='tour-skip']")
+    pg2.click("[data-testid='tour-skip']")
+    pg2.wait_for_selector("[data-testid='dashboard-add-task']")
+    check("桌機：略過導覽後進入空白今日頁", pg2.locator("[data-testid='tour']").count() == 0)
     pg2.screenshot(path=f"{SHOTS}/08-desktop.png", full_page=True)
     ctx2.close()
 
