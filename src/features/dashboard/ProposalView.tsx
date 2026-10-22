@@ -98,6 +98,7 @@ function Details({ proposal, tz }: { proposal: PlanProposal; tz: string }) {
                     {r.kind === 'event' && <Chip tone="hard">行程</Chip>}
                     {r.kind === 'incident' && <Chip tone="hard">新行程</Chip>}
                     {r.kind === 'rest' && <Chip>休息</Chip>}
+                    {r.segments && r.segments > 1 && <Chip>{r.segments} 段</Chip>}
                     {r.isMinimum && <Chip tone="warn">最低</Chip>}
                   </li>
                 ))}
@@ -144,11 +145,26 @@ interface ScheduleRow {
   startMs: number;
   endMs: number;
   isMinimum?: boolean;
+  /** 同一任務連續幾段（中間只隔休息）合併成一列 */
+  segments?: number;
 }
 
-/** 任務區塊 + 固定行程（含狀況加入的行程、休息）依時間排在一起；只列還沒結束的 */
-function scheduleRows(p: PlanProposal): ScheduleRow[] {
-  const rows: ScheduleRow[] = p.blocks.map((b) => ({ key: b.id, kind: 'block', title: b.title, startMs: b.startMs, endMs: b.endMs, isMinimum: b.isMinimum }));
+const MERGE_GAP_MS = 20 * 60_000;
+
+/** 任務區塊 + 固定行程（含狀況加入的行程、休息）依時間排在一起；只列還沒結束的；同任務連續幾段合併 */
+export function scheduleRows(p: PlanProposal): ScheduleRow[] {
+  const rows: ScheduleRow[] = [];
+  const blocks = p.blocks.slice().sort((a, b) => a.startMs - b.startMs);
+  for (const b of blocks) {
+    const last = rows[rows.length - 1];
+    if (last && last.kind === 'block' && last.title === b.title && b.startMs - last.endMs <= MERGE_GAP_MS) {
+      last.endMs = b.endMs;
+      last.segments = (last.segments ?? 1) + 1;
+      last.isMinimum = last.isMinimum || b.isMinimum;
+      continue;
+    }
+    rows.push({ key: b.id, kind: 'block', title: b.title, startMs: b.startMs, endMs: b.endMs, isMinimum: b.isMinimum });
+  }
   p.busy
     .filter((b) => b.endMs > p.generatedAt)
     .forEach((b, i) => rows.push({ key: `busy-${i}`, kind: b.kind, title: b.title, startMs: b.startMs, endMs: b.endMs }));
