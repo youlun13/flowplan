@@ -1,4 +1,5 @@
-import { AlertTriangle, Check } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, Check, ChevronDown, ChevronUp } from 'lucide-react';
 import { Button, Chip, cx } from '@/components/ui';
 import type { PlanProposal } from '@/engine/planner';
 import { downsidesOf, type PlanOption } from '@/engine/options';
@@ -8,8 +9,8 @@ import { addLocalDays, formatDuration, formatTime } from '@/lib/time';
 
 /**
  * 重排結果：只回答「現在要做什麼」。
- * 一或兩張卡片（建議 / 另一個選擇），每張：先做什麼、幾點到幾點、為什麼、之後接著什麼、對其他事的影響、「就這個」。
- * 「細節」只放兩樣：套用後今日安排、缺點（做不完的、趕不上的、只做最低版本的、被改時間的）。
+ * 一或兩張卡片（建議 / 另一個選擇），每張只有：做什麼、幾點到幾點、一句為什麼、「就這個」、「細節」。
+ * 「細節」是明顯的按鈕，展開後只有兩樣：套用後今日安排、缺點。字都用正常大小。
  */
 export function ProposalView({ options, tz, onApply, onKeep, applying }: { options: PlanOption[]; tz: string; onApply: (p: PlanProposal) => void; onKeep: () => void; applying?: boolean }) {
   const a = options[0].proposal;
@@ -17,23 +18,23 @@ export function ProposalView({ options, tz, onApply, onKeep, applying }: { optio
 
   return (
     <div className="space-y-3">
-      <div className="text-sm text-muted">
+      <div className="text-[15px] text-muted">
         今天還有 <span className="text-ink tnum">{formatDuration(a.stats.availableMinutes)}</span> 可用
         {a.stats.candidateMinutes > a.stats.availableMinutes && <span className="text-warn">，要做的事需要 {formatDuration(a.stats.candidateMinutes)}</span>}
       </div>
       {urgent.length > 0 && (
-        <p className="flex gap-2 rounded-lg bg-warn-soft px-3 py-2 text-sm text-warn">
-          <AlertTriangle size={16} className="mt-0.5 shrink-0" />
+        <p className="flex gap-2 rounded-lg bg-warn-soft px-3 py-2 text-[15px] text-warn">
+          <AlertTriangle size={18} className="mt-0.5 shrink-0" />
           <span>{urgent[0]}</span>
         </p>
       )}
 
-      <h3 className="pt-1 text-[15px] font-semibold">現在要做什麼？</h3>
+      <h3 className="pt-1 text-[17px] font-semibold">現在要做什麼？</h3>
       {options.map((o) => (
         <OptionCard key={o.key} option={o} tz={tz} onPick={() => onApply(o.proposal)} applying={applying} recommended={o.key === 'A'} />
       ))}
 
-      <button type="button" className="w-full py-2 text-sm text-muted" onClick={onKeep}>
+      <button type="button" className="w-full py-2 text-[15px] text-muted" onClick={onKeep}>
         都不要，保留原計畫
       </button>
     </div>
@@ -43,32 +44,40 @@ export function ProposalView({ options, tz, onApply, onKeep, applying }: { optio
 function OptionCard({ option, tz, onPick, applying, recommended }: { option: PlanOption; tz: string; onPick: () => void; applying?: boolean; recommended: boolean }) {
   const p = option.proposal;
   const next = p.nextAction;
+  const [open, setOpen] = useState(false);
   return (
     <section className={cx('rounded-xl border p-4', recommended ? 'border-accent/60 bg-accent-soft' : 'border-line bg-surface')} data-testid={`option-${option.key}`}>
-      <div className="flex items-center justify-between">
-        <span className={cx('text-xs font-medium', recommended ? 'text-accent' : 'text-muted')}>{option.label}</span>
-        {!p.feasible && <Chip tone="danger">有截止趕不上</Chip>}
+      <div className="flex flex-wrap items-center gap-2">
+        <span className={cx('text-[15px] font-semibold', recommended ? 'text-accent' : 'text-muted')}>{option.label}</span>
+        {!p.feasible && (
+          <Chip tone="danger" className="text-sm">
+            有截止趕不上
+          </Chip>
+        )}
+        {next?.block.isMinimum && (
+          <Chip tone="warn" className="text-sm">
+            最低版本
+          </Chip>
+        )}
       </div>
       {next ? (
         <>
-          <div className="mt-1 text-[19px] font-semibold leading-tight">{next.block.title}</div>
-          <div className="mt-1 text-sm tnum">
-            {formatTime(next.block.startMs, tz)}–{formatTime(next.block.endMs, tz)}
-            {next.block.isMinimum && <Chip tone="warn" className="ml-1.5">最低版本</Chip>}
+          <div className="mt-2 text-[22px] font-semibold leading-tight">{next.block.title}</div>
+          <div className="mt-1.5 text-[17px] tnum">
+            {formatTime(next.block.startMs, tz)}–{formatTime(next.block.endMs, tz)} <span className="text-muted">· {formatDuration(next.block.minutes)}</span>
           </div>
-          <div className="mt-0.5 text-xs text-muted">{next.reason}</div>
+          <div className="mt-1 text-[15px] text-muted">{next.reason}</div>
         </>
       ) : (
-        <div className="mt-1 text-[15px]">今天沒有可以安排的任務</div>
+        <div className="mt-2 text-[17px]">今天沒有可以安排的任務</div>
       )}
-      <div className="mt-3 space-y-0.5 text-xs text-muted">
-        {option.after && <div>之後：{option.after}</div>}
-        <div>影響：{option.consequence}</div>
-      </div>
-      <Button variant="primary" full className="mt-3" onClick={onPick} disabled={applying}>
-        <Check size={16} /> 就這個
+      <Button variant="primary" full className="mt-4 min-h-12 text-[17px]" onClick={onPick} disabled={applying}>
+        <Check size={18} /> 就這個
       </Button>
-      <Details proposal={p} tz={tz} />
+      <Button full className="mt-2 min-h-12 text-[16px]" onClick={() => setOpen((v) => !v)} data-testid="details-toggle" aria-expanded={open}>
+        {open ? <ChevronUp size={18} /> : <ChevronDown size={18} />} 細節：今日安排、缺點
+      </Button>
+      {open && <Details proposal={p} tz={tz} />}
     </section>
   );
 }
@@ -78,28 +87,27 @@ function Details({ proposal, tz }: { proposal: PlanProposal; tz: string }) {
   const downsides = downsidesOf(proposal, tz);
 
   return (
-    <details className="mt-2 text-sm">
-      <summary className="cursor-pointer py-1 text-xs text-muted">細節：套用後今日安排、缺點</summary>
-      <div className="mt-2 space-y-3">
+    <div className="mt-3 text-[15px]">
+      <div className="space-y-4">
         <div>
-          <div className="mb-1 text-xs font-semibold text-muted">套用後今日安排</div>
+          <div className="mb-1.5 text-[16px] font-semibold">套用後今日安排</div>
           {(() => {
             const rows = scheduleRows(proposal);
             return rows.length === 0 ? (
-              <p className="text-sm text-muted">沒有安排。</p>
+              <p className="text-muted">沒有安排。</p>
             ) : (
               <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
                 {rows.map((r) => (
-                  <li key={r.key} className={cx('flex items-center gap-3 px-3 py-1.5', r.kind !== 'block' && 'text-muted')}>
-                    <span className="w-[5.5rem] shrink-0 text-xs tnum">
+                  <li key={r.key} className={cx('flex items-start gap-3 px-3 py-2', r.kind !== 'block' && 'text-muted')}>
+                    <span className="w-[6.5rem] shrink-0 text-[15px] leading-6 tnum">
                       {formatTime(r.startMs, tz)}–{formatTime(r.endMs, tz)}
                     </span>
-                    <span className={cx('min-w-0 flex-1 truncate text-sm', r.kind === 'block' && 'text-ink')}>{r.title}</span>
-                    {r.kind === 'event' && <Chip tone="hard">行程</Chip>}
-                    {r.kind === 'incident' && <Chip tone="hard">新行程</Chip>}
-                    {r.kind === 'rest' && <Chip>休息</Chip>}
-                    {r.segments && r.segments > 1 && <Chip>{r.segments} 段</Chip>}
-                    {r.isMinimum && <Chip tone="warn">最低</Chip>}
+                    <span className={cx('min-w-0 flex-1 text-[15px] leading-6', r.kind === 'block' && 'text-ink')}>{r.title}</span>
+                    {r.kind === 'event' && <Chip tone="hard" className="mt-1">行程</Chip>}
+                    {r.kind === 'incident' && <Chip tone="hard" className="mt-1">新行程</Chip>}
+                    {r.kind === 'rest' && <Chip className="mt-1">休息</Chip>}
+                    {r.segments && r.segments > 1 && <Chip className="mt-1">{r.segments} 段</Chip>}
+                    {r.isMinimum && <Chip tone="warn" className="mt-1">最低</Chip>}
                   </li>
                 ))}
               </ul>
@@ -108,14 +116,14 @@ function Details({ proposal, tz }: { proposal: PlanProposal; tz: string }) {
         </div>
 
         <div>
-          <div className="mb-1 text-xs font-semibold text-muted">缺點</div>
+          <div className="mb-1.5 text-[16px] font-semibold">缺點</div>
           {downsides.length === 0 ? (
             <p className="text-muted">沒有明顯缺點：所有事都排得下，也沒有改時間。</p>
           ) : (
-            <ul className="space-y-1">
+            <ul className="space-y-2">
               {downsides.map((d, i) => (
                 <li key={i} className="flex gap-2">
-                  <AlertTriangle size={16} className={cx('mt-0.5 shrink-0', d.severe ? 'text-danger' : 'text-warn')} />
+                  <AlertTriangle size={18} className={cx('mt-0.5 shrink-0', d.severe ? 'text-danger' : 'text-warn')} />
                   <span>
                     {d.text}
                     {d.deferTaskId && d.deferTitle && (
@@ -134,7 +142,7 @@ function Details({ proposal, tz }: { proposal: PlanProposal; tz: string }) {
           )}
         </div>
       </div>
-    </details>
+    </div>
   );
 }
 
