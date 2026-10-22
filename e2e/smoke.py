@@ -217,7 +217,7 @@ with sync_playwright() as p:
     page.wait_for_timeout(400)
     check("套用後臨時行程進入今天的固定行程", page.locator("text=E2E 臨時行程").count() >= 1)
     page.click("button:has-text('撤銷')")
-    page.wait_for_timeout(400)
+    page.wait_for_selector("text=E2E 臨時行程", state="detached", timeout=8000)
     check("撤銷後臨時行程消失", page.locator("text=E2E 臨時行程").count() == 0)
 
     # ---- 第三階段：假 Worker（驗收 9、10、12）----
