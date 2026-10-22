@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildPlan, type PlannerInput, type PlannerSettings } from '@/engine/planner';
-import { buildOptions, consequenceOf } from '@/engine/options';
+import { buildOptions, consequenceOf, downsidesOf } from '@/engine/options';
 import type { Task, WorkBlock } from '@/db/schema';
 import { localDateTimeToIso, localDateTimeToMs, toLocalTime } from '@/lib/time';
 
@@ -85,5 +85,22 @@ describe('buildOptions（現在要做什麼：兩個選擇）', () => {
     const a = late[0];
     expect(consequenceOf(a.proposal)).toMatch(/趕不上截止|排不下/);
     if (late[1]) expect(late[1].consequence).toMatch(/趕不上截止|排不下|最低版本|改時間|排得下/);
+  });
+});
+
+describe('downsidesOf（細節裡的缺點）', () => {
+  it('沒事就空；時間不夠時列出做不完、趕不上截止、只做最低版本、改時間', () => {
+    const fine = buildPlan(input({ tasks }));
+    expect(downsidesOf(fine, TPE)).toEqual([]);
+    const t = [
+      task({ id: 'due', title: '今晚截止', dueAt: iso('21:30'), estimatedMinutes: 120, priority: 'P1' }),
+      task({ id: 'big', title: '大任務', estimatedMinutes: 180, minimumMinutes: 30, priority: 'P2' }),
+      task({ id: 'small', title: '小事', estimatedMinutes: 60, priority: 'P3', splittable: false }),
+    ];
+    const existing = [block({ id: 'b1', taskId: 'small', startAt: iso('21:00'), endAt: iso('22:00') })];
+    const late = buildPlan(input({ nowMs: ms('20:30'), tasks: t, existingBlocks: existing, pinFirstTaskId: 'due' }));
+    const texts = downsidesOf(late, TPE).map((d) => d.text).join('\n');
+    expect(texts).toMatch(/趕不上截止|做不完|最低版本|改到/);
+    expect(downsidesOf(late, TPE).some((d) => d.severe)).toBe(late.unscheduled.some((u) => u.reasonCode === 'DEADLINE_MISSED'));
   });
 });

@@ -1,8 +1,7 @@
-import { useState } from 'react';
-import { AlertTriangle, ArrowRight, Check, Minus, Plus, SkipForward, Sparkles } from 'lucide-react';
+import { AlertTriangle, Check } from 'lucide-react';
 import { Button, Chip, cx } from '@/components/ui';
 import type { PlanProposal } from '@/engine/planner';
-import type { PlanOption } from '@/engine/options';
+import { downsidesOf, type PlanOption } from '@/engine/options';
 import { deferTask } from '@/db/repo';
 import { useToast } from '@/hooks/useToast';
 import { addLocalDays, formatDuration, formatTime } from '@/lib/time';
@@ -10,9 +9,9 @@ import { addLocalDays, formatDuration, formatTime } from '@/lib/time';
 /**
  * 重排結果：只回答「現在要做什麼」。
  * 一或兩張卡片（建議 / 另一個選擇），每張：先做什麼、幾點到幾點、為什麼、之後接著什麼、對其他事的影響、「就這個」。
- * 變更對照、完整安排、判斷過程、AI 說明都收在卡片裡的「細節」。
+ * 「細節」只放兩樣：套用後今日安排、缺點（做不完的、趕不上的、只做最低版本的、被改時間的）。
  */
-export function ProposalView({ options, tz, onApply, onKeep, applying, explain }: { options: PlanOption[]; tz: string; onApply: (p: PlanProposal) => void; onKeep: () => void; applying?: boolean; explain?: (p: PlanProposal) => Promise<string> }) {
+export function ProposalView({ options, tz, onApply, onKeep, applying }: { options: PlanOption[]; tz: string; onApply: (p: PlanProposal) => void; onKeep: () => void; applying?: boolean }) {
   const a = options[0].proposal;
   const urgent = a.warnings.filter((w) => w.includes('截止') || w.includes('時間不夠'));
 
@@ -31,7 +30,7 @@ export function ProposalView({ options, tz, onApply, onKeep, applying, explain }
 
       <h3 className="pt-1 text-[15px] font-semibold">現在要做什麼？</h3>
       {options.map((o) => (
-        <OptionCard key={o.key} option={o} tz={tz} onPick={() => onApply(o.proposal)} applying={applying} explain={explain} recommended={o.key === 'A'} />
+        <OptionCard key={o.key} option={o} tz={tz} onPick={() => onApply(o.proposal)} applying={applying} recommended={o.key === 'A'} />
       ))}
 
       <button type="button" className="w-full py-2 text-sm text-muted" onClick={onKeep}>
@@ -41,7 +40,7 @@ export function ProposalView({ options, tz, onApply, onKeep, applying, explain }
   );
 }
 
-function OptionCard({ option, tz, onPick, applying, explain, recommended }: { option: PlanOption; tz: string; onPick: () => void; applying?: boolean; explain?: (p: PlanProposal) => Promise<string>; recommended: boolean }) {
+function OptionCard({ option, tz, onPick, applying, recommended }: { option: PlanOption; tz: string; onPick: () => void; applying?: boolean; recommended: boolean }) {
   const p = option.proposal;
   const next = p.nextAction;
   return (
@@ -69,160 +68,89 @@ function OptionCard({ option, tz, onPick, applying, explain, recommended }: { op
       <Button variant="primary" full className="mt-3" onClick={onPick} disabled={applying}>
         <Check size={16} /> 就這個
       </Button>
-      <Details proposal={p} tz={tz} explain={explain} />
+      <Details proposal={p} tz={tz} />
     </section>
   );
 }
 
-function Details({ proposal, tz, explain }: { proposal: PlanProposal; tz: string; explain?: (p: PlanProposal) => Promise<string> }) {
+function Details({ proposal, tz }: { proposal: PlanProposal; tz: string }) {
   const toast = useToast();
-  const [explanation, setExplanation] = useState<string | null>(null);
-  const [explaining, setExplaining] = useState(false);
-  const { diff } = proposal;
-
-  async function runExplain() {
-    if (!explain) return;
-    setExplaining(true);
-    try {
-      setExplanation(await explain(proposal));
-    } catch (e) {
-      toast.show(e instanceof Error ? e.message : 'AI 說明失敗', 'danger');
-    } finally {
-      setExplaining(false);
-    }
-  }
+  const downsides = downsidesOf(proposal, tz);
 
   return (
     <details className="mt-2 text-sm">
-      <summary className="cursor-pointer py-1 text-xs text-muted">細節：完整安排、變更、判斷過程</summary>
+      <summary className="cursor-pointer py-1 text-xs text-muted">細節：套用後今日安排、缺點</summary>
       <div className="mt-2 space-y-3">
         <div>
-          <div className="mb-1 text-xs font-semibold text-muted">套用後的今日安排</div>
-          {proposal.blocks.length === 0 ? (
-            <p className="text-sm text-muted">沒有區塊。</p>
+          <div className="mb-1 text-xs font-semibold text-muted">套用後今日安排</div>
+          {(() => {
+            const rows = scheduleRows(proposal);
+            return rows.length === 0 ? (
+              <p className="text-sm text-muted">沒有安排。</p>
+            ) : (
+              <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
+                {rows.map((r) => (
+                  <li key={r.key} className={cx('flex items-center gap-3 px-3 py-1.5', r.kind !== 'block' && 'text-muted')}>
+                    <span className="w-[5.5rem] shrink-0 text-xs tnum">
+                      {formatTime(r.startMs, tz)}–{formatTime(r.endMs, tz)}
+                    </span>
+                    <span className={cx('min-w-0 flex-1 truncate text-sm', r.kind === 'block' && 'text-ink')}>{r.title}</span>
+                    {r.kind === 'event' && <Chip tone="hard">行程</Chip>}
+                    {r.kind === 'incident' && <Chip tone="hard">新行程</Chip>}
+                    {r.kind === 'rest' && <Chip>休息</Chip>}
+                    {r.isMinimum && <Chip tone="warn">最低</Chip>}
+                  </li>
+                ))}
+              </ul>
+            );
+          })()}
+        </div>
+
+        <div>
+          <div className="mb-1 text-xs font-semibold text-muted">缺點</div>
+          {downsides.length === 0 ? (
+            <p className="text-muted">沒有明顯缺點：所有事都排得下，也沒有改時間。</p>
           ) : (
-            <ul className="divide-y divide-line rounded-lg border border-line bg-surface">
-              {proposal.blocks.map((b) => (
-                <li key={b.id} className={cx('flex items-center gap-3 px-3 py-1.5', b.kept && 'text-muted')}>
-                  <span className="w-[5.5rem] shrink-0 text-xs tnum">
-                    {formatTime(b.startMs, tz)}–{formatTime(b.endMs, tz)}
+            <ul className="space-y-1">
+              {downsides.map((d, i) => (
+                <li key={i} className="flex gap-2">
+                  <AlertTriangle size={16} className={cx('mt-0.5 shrink-0', d.severe ? 'text-danger' : 'text-warn')} />
+                  <span>
+                    {d.text}
+                    {d.deferTaskId && d.deferTitle && (
+                      <button
+                        type="button"
+                        className="ml-1 text-accent underline-offset-2 hover:underline"
+                        onClick={() => deferTask(d.deferTaskId!, addLocalDays(proposal.date, 1)).then(() => toast.show(`已把「${d.deferTitle}」延到明天`))}
+                      >
+                        延到明天
+                      </button>
+                    )}
                   </span>
-                  <span className="min-w-0 flex-1 truncate text-sm text-ink">{b.title}</span>
-                  {b.isMinimum && <Chip tone="warn">最低</Chip>}
-                  {b.kept && <Chip>不變</Chip>}
                 </li>
               ))}
             </ul>
           )}
         </div>
-
-        <div>
-          <div className="mb-1 text-xs font-semibold text-muted">變更</div>
-          <ul className="space-y-1">
-            {proposal.effects.createEvent && (
-              <li className="flex gap-2">
-                <Plus size={16} className="mt-0.5 shrink-0 text-hard" />
-                <span>
-                  加入固定行程「{proposal.effects.createEvent.title}」{formatTime(proposal.effects.createEvent.startMs, tz)}–{formatTime(proposal.effects.createEvent.endMs, tz)}
-                </span>
-              </li>
-            )}
-            {proposal.effects.completeTaskId && (
-              <li className="flex gap-2">
-                <Minus size={16} className="mt-0.5 shrink-0 text-done" />
-                <span>標記任務完成</span>
-              </li>
-            )}
-            {diff.added.map((b) => (
-              <li key={b.id} className="flex gap-2">
-                <Plus size={16} className="mt-0.5 shrink-0 text-accent" />
-                <span>
-                  <span className="tnum">{formatTime(b.startMs, tz)}–{formatTime(b.endMs, tz)}</span> {b.title}
-                </span>
-              </li>
-            ))}
-            {diff.moved.map(({ block, fromStartMs, fromEndMs }) => (
-              <li key={block.id} className="flex gap-2">
-                <ArrowRight size={16} className="mt-0.5 shrink-0 text-warn" />
-                <span>
-                  {block.title}：<span className="text-muted line-through tnum">{formatTime(fromStartMs, tz)}–{formatTime(fromEndMs, tz)}</span> →{' '}
-                  <span className="tnum">{formatTime(block.startMs, tz)}–{formatTime(block.endMs, tz)}</span>
-                </span>
-              </li>
-            ))}
-            {diff.shortened.map((s) => (
-              <li key={s.taskId} className="flex gap-2">
-                <Minus size={16} className="mt-0.5 shrink-0 text-warn" />
-                <span>
-                  {s.title}：{formatDuration(s.fromMinutes)} → {formatDuration(s.toMinutes)}
-                </span>
-              </li>
-            ))}
-            {diff.removed
-              .filter((r) => !diff.moved.some((m) => m.block.taskId === r.taskId))
-              .map((r) => (
-                <li key={r.id} className="flex gap-2">
-                  <Minus size={16} className="mt-0.5 shrink-0 text-danger" />
-                  <span>
-                    移除 <span className="tnum">{formatTime(r.startAt, tz)}–{formatTime(r.endAt, tz)}</span> 的區塊
-                  </span>
-                </li>
-              ))}
-            {diff.deferred.map((u) => (
-              <li key={u.taskId} className="flex gap-2">
-                <SkipForward size={16} className="mt-0.5 shrink-0 text-danger" />
-                <span>
-                  {u.title}：{u.reason}
-                  {u.suggestion === 'defer_tomorrow' && (
-                    <button
-                      type="button"
-                      className="ml-1 text-accent underline-offset-2 hover:underline"
-                      onClick={() => deferTask(u.taskId, addLocalDays(proposal.date, 1)).then(() => toast.show(`已把「${u.title}」延到明天`))}
-                    >
-                      延到明天
-                    </button>
-                  )}
-                </span>
-              </li>
-            ))}
-            {diff.added.length + diff.moved.length + diff.shortened.length + diff.removed.length + diff.deferred.length === 0 && !proposal.effects.createEvent && !proposal.effects.completeTaskId && (
-              <li className="text-muted">沒有變更。</li>
-            )}
-          </ul>
-        </div>
-
-        {proposal.warnings.length > 0 && (
-          <ul className="space-y-1">
-            {proposal.warnings.map((w, i) => (
-              <li key={i} className="flex gap-2 text-warn">
-                <AlertTriangle size={16} className="mt-0.5 shrink-0" />
-                <span>{w}</span>
-              </li>
-            ))}
-          </ul>
-        )}
-
-        <div>
-          <div className="mb-1 text-xs font-semibold text-muted">規則引擎的判斷過程</div>
-          <ul className="list-disc space-y-1 pl-5 text-muted">
-            {proposal.explanation.map((line, i) => (
-              <li key={i}>{line}</li>
-            ))}
-          </ul>
-        </div>
-
-        {explain && (
-          <div className="rounded-lg border border-line px-3 py-2">
-            {explanation ? (
-              <p>{explanation}</p>
-            ) : (
-              <button type="button" onClick={runExplain} disabled={explaining} className="flex items-center gap-1.5 text-accent disabled:opacity-50">
-                <Sparkles size={16} /> {explaining ? 'AI 整理中…' : '請 AI 用白話說明（算一次請求）'}
-              </button>
-            )}
-          </div>
-        )}
       </div>
     </details>
   );
+}
+
+interface ScheduleRow {
+  key: string;
+  kind: 'block' | 'event' | 'incident' | 'rest';
+  title: string;
+  startMs: number;
+  endMs: number;
+  isMinimum?: boolean;
+}
+
+/** 任務區塊 + 固定行程（含狀況加入的行程、休息）依時間排在一起；只列還沒結束的 */
+function scheduleRows(p: PlanProposal): ScheduleRow[] {
+  const rows: ScheduleRow[] = p.blocks.map((b) => ({ key: b.id, kind: 'block', title: b.title, startMs: b.startMs, endMs: b.endMs, isMinimum: b.isMinimum }));
+  p.busy
+    .filter((b) => b.endMs > p.generatedAt)
+    .forEach((b, i) => rows.push({ key: `busy-${i}`, kind: b.kind, title: b.title, startMs: b.startMs, endMs: b.endMs }));
+  return rows.sort((a, b) => a.startMs - b.startMs);
 }

@@ -171,6 +171,8 @@ export interface PlanProposal {
   /** 候選任務依規則排序後的 id（含排不下的），給「另一個選擇」用 */
   ranked: string[];
   pinnedTaskId?: string;
+  /** 今天的固定行程（含狀況加入的行程與休息），給「套用後今日安排」一起列出 */
+  busy: BusyInterval[];
 }
 
 /* ------------------------------------ 內部 ------------------------------------ */
@@ -641,5 +643,6 @@ export function buildPlan(input: PlannerInput): PlanProposal {
     availability: { ...availability, windows: mergeIntervals(availability.windows) },
     ranked: candidates.map((c) => c.task.id),
     pinnedTaskId: pinnedId,
+    busy: busy.slice().sort((a, b) => a.startMs - b.startMs),
   };
 }

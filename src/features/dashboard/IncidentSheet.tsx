@@ -7,7 +7,7 @@ import { applyProposal } from '@/db/plan';
 import { INCIDENT_LABEL, type Incident, type PlanProposal } from '@/engine/planner';
 import { buildOptions, type PlanOption } from '@/engine/options';
 import type { Occurrence } from '@/engine/recurrence';
-import { aiReady, explainProposal, resolveIncidentText } from '@/ai/resolve';
+import { aiReady, resolveIncidentText } from '@/ai/resolve';
 import { estimateCostUsd, formatUsd } from '@/ai/pricing';
 import type { ParsedIncident, ResolveResult } from '@/ai/types';
 import { useToast } from '@/hooks/useToast';
@@ -164,14 +164,13 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
   }
 
   const title = options ? `重排 · ${INCIDENT_LABEL[options[0].proposal.trigger]}` : '我遇到狀況了';
-  const explain = ai.ok ? (p: PlanProposal) => explainProposal(p, { nowMs: Date.now(), tz, settings }).then((r) => r.text) : undefined;
 
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       <ErrorText>{error}</ErrorText>
       {options ? (
         <div className="mt-2">
-          <ProposalView options={options} tz={tz} onApply={apply} onKeep={onClose} applying={applying} explain={explain} />
+          <ProposalView options={options} tz={tz} onApply={apply} onKeep={onClose} applying={applying} />
           <button type="button" className="w-full py-2 text-sm text-muted" onClick={() => setOptions(null)}>
             修改狀況描述
           </button>

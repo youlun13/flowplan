@@ -5,7 +5,7 @@
  * 兩者結果一樣（或沒有第二個候選）就只給一個。純函數。
  */
 import type { PlanProposal } from './planner';
-import { formatTime } from '@/lib/time';
+import { formatDuration, formatTime } from '@/lib/time';
 
 export interface PlanOption {
   key: 'A' | 'B';
@@ -55,4 +55,45 @@ export function buildOptions(build: (pinFirstTaskId?: string) => PlanProposal, t
   if (!b.nextAction || b.nextAction.block.taskId === firstId) return options;
   options.push({ key: 'B', label: '另一個選擇', proposal: b, consequence: consequenceOf(b), after: afterOf(b, tz) });
   return options;
+}
+
+export interface Downside {
+  text: string;
+  severe?: boolean;
+  deferTaskId?: string;
+  deferTitle?: string;
+}
+
+/** 這個方案的代價，用人話列出：做不完的、趕不上截止的、只做最低版本的、被改時間的、其他警示 */
+export function downsidesOf(p: PlanProposal, tz: string): Downside[] {
+  const out: Downside[] = [];
+  for (const u of p.unscheduled) {
+    const severe = u.reasonCode === 'DEADLINE_MISSED';
+    out.push({
+      text: severe ? `「${u.title}」趕不上截止：${u.reason}` : `「${u.title}」今天做不完：${u.reason}`,
+      severe,
+      deferTaskId: u.suggestion === 'defer_tomorrow' ? u.taskId : undefined,
+      deferTitle: u.suggestion === 'defer_tomorrow' ? u.title : undefined,
+    });
+  }
+  const minimumSeen = new Set<string>();
+  for (const b of p.blocks) {
+    if (!b.isMinimum || minimumSeen.has(b.taskId)) continue;
+    minimumSeen.add(b.taskId);
+    const minutes = p.blocks.filter((x) => x.taskId === b.taskId).reduce((s, x) => s + x.minutes, 0);
+    out.push({ text: `「${b.title}」時間不夠，只做最低版本（${formatDuration(minutes)}）` });
+  }
+  for (const m of p.diff.moved) {
+    out.push({ text: `「${m.block.title}」從 ${formatTime(m.fromStartMs, tz)} 改到 ${formatTime(m.block.startMs, tz)}` });
+  }
+  for (const s of p.diff.shortened) {
+    if (minimumSeen.has(s.taskId)) continue;
+    out.push({ text: `「${s.title}」縮短：${formatDuration(s.fromMinutes)} → ${formatDuration(s.toMinutes)}` });
+  }
+  for (const w of p.warnings) {
+    // 截止 / 時間不夠的警示已由上面的項目涵蓋
+    if (w.includes('無法在截止前') || w.startsWith('今天的時間不夠')) continue;
+    out.push({ text: w });
+  }
+  return out;
 }
