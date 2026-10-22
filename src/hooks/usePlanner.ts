@@ -75,7 +75,7 @@ export function usePlanner(nowMs: number) {
   );
 
   const buildProposal = useCallback(
-    (incident?: Incident): PlanProposal => buildPlan({ ...baseInput, nowMs: Date.now(), incident }),
+    (incident?: Incident, pinFirstTaskId?: string): PlanProposal => buildPlan({ ...baseInput, nowMs: Date.now(), incident, pinFirstTaskId }),
     [baseInput],
   );
 

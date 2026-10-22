@@ -82,6 +82,8 @@ export interface PlannerInput {
   tomorrow?: { availableMinutes: number; plannedMinutes: number };
   /** 預估工時校正（由歷史算出；undefined = 不校正） */
   calibration?: { factor?: number; byEnergy: Partial<Record<Energy, { factor: number; samples: number }>> };
+  /** 使用者指定「先做這個」：該任務排最前面，其他任務的既有區塊全部重排（方案 B 用） */
+  pinFirstTaskId?: string;
 }
 
 /* ------------------------------------ 輸出 ------------------------------------ */
@@ -100,7 +102,8 @@ export type ReasonCode =
   | 'NO_TIME'
   | 'MIN_NO_TIME'
   | 'DEADLINE_MISSED'
-  | 'NOT_SPLITTABLE';
+  | 'NOT_SPLITTABLE'
+  | 'PINNED';
 
 export interface ProposedBlock {
   id: string;
@@ -165,6 +168,9 @@ export interface PlanProposal {
   feasible: boolean;
   stats: { availableMinutes: number; plannedMinutes: number; candidateMinutes: number };
   availability: AvailabilityResult;
+  /** 候選任務依規則排序後的 id（含排不下的），給「另一個選擇」用 */
+  ranked: string[];
+  pinnedTaskId?: string;
 }
 
 /* ------------------------------------ 內部 ------------------------------------ */
@@ -185,6 +191,7 @@ interface Candidate {
 
 function reasonText(codes: ReasonCode[], c: Candidate, tz: string): string {
   const parts: string[] = [];
+  if (codes.includes('PINNED')) parts.push('你選擇先做這個');
   if (codes.includes('IN_PROGRESS')) parts.push('進行中');
   if (codes.includes('OVERDUE')) parts.push('已逾期');
   else if (codes.includes('DUE_TODAY')) parts.push(`今天 ${formatTime(c.dueMs!, tz)} 截止`);
@@ -355,10 +362,13 @@ export function buildPlan(input: PlannerInput): PlanProposal {
   }
   const candidateMinutes = candidates.reduce((s, c) => s + c.remaining, 0);
 
-  // 4. 排序（規則 2、3、4、7、8）
+  // 4. 排序（規則 2、3、4、7、8）；使用者指定先做的任務排在進行中之後、其他之前
   const isActive = (c: Candidate) => c.task.status === 'in_progress' || c.task.id === input.activeTaskId;
+  const pinnedId = input.pinFirstTaskId && candidates.some((c) => c.task.id === input.pinFirstTaskId) ? input.pinFirstTaskId : undefined;
+  const isPinned = (c: Candidate) => c.task.id === pinnedId;
   candidates.sort((a, b) => {
     if (isActive(a) !== isActive(b)) return isActive(a) ? -1 : 1;
+    if (isPinned(a) !== isPinned(b)) return isPinned(a) ? -1 : 1;
     const tier = a.tier - b.tier;
     const pri = PRIORITY_RANK[a.task.priority] - PRIORITY_RANK[b.task.priority];
     if (settings.preferDeadlineFirst) {
@@ -396,6 +406,8 @@ export function buildPlan(input: PlannerInput): PlanProposal {
     const interval = { start: Math.max(s, nowMs), end: e };
     const stillValid =
       cand !== undefined &&
+      // 指定先做某任務時，其他任務的既有區塊全部重排，讓它真的排在最前面
+      (pinnedId === undefined || b.taskId === pinnedId || isActive(cand)) &&
       e > nowMs &&
       interval.end - interval.start >= MIN_CHUNK * 60_000 &&
       hardConflicts(interval, availability).length === 0 &&
@@ -440,6 +452,7 @@ export function buildPlan(input: PlannerInput): PlanProposal {
     else if (c.tier === 2) codes.push('DUE_SOON');
     if (c.task.priority === 'P1') codes.push('P1');
     if (c.task.deferCount >= 2) codes.push('STARVING');
+    if (isPinned(c)) codes.push('PINNED');
 
     const splittable = c.task.splittable && settings.allowSplitting;
     const notAfterMs = c.dueMs !== undefined && c.tier <= 1 ? c.dueMs : undefined;
@@ -523,10 +536,13 @@ export function buildPlan(input: PlannerInput): PlanProposal {
   let nextAction: NextAction | null = null;
   if (blocks.length > 0) {
     const activeCand = candidates.find((c) => isActive(c) && c.blocks.length > 0);
-    const first = activeCand ? activeCand.blocks.slice().sort((a, b) => a.startMs - b.startMs)[0] : blocks[0];
+    const pinnedCand = candidates.find((c) => isPinned(c) && c.blocks.length > 0);
+    const lead = activeCand ?? pinnedCand;
+    const first = lead ? lead.blocks.slice().sort((a, b) => a.startMs - b.startMs)[0] : blocks[0];
     const cand = candById.get(first.taskId)!;
     const parts: string[] = [];
     if (first.reasonCodes.includes('IN_PROGRESS') || first.kept && isActive(cand)) parts.push('已在進行中，先把它做完');
+    if (isPinned(cand)) parts.push('你選擇先做這個');
     if (cand.tier === 0) parts.push('已超過截止時間');
     else if (cand.tier === 1) parts.push(`今天 ${formatTime(cand.dueMs!, tz)} 截止`);
     else if (cand.tier === 2) parts.push('48 小時內截止');
@@ -566,6 +582,7 @@ export function buildPlan(input: PlannerInput): PlanProposal {
   const diff: PlanDiff = { added, kept: keptBlocks, moved, shortened, removed, deferred: unscheduled };
 
   // 說明與警示
+  if (pinnedId) explanation.push(`你選擇先做「${candById.get(pinnedId)!.task.title}」，其餘任務依規則重排。`);
   explanation.unshift(
     `從 ${formatTime(nowMs, tz)} 到 ${formatTime(availability.workWindow.end, tz)}，扣掉 ${busy.length} 個行程、睡眠與緩衝，還有 ${formatDuration(availableMinutes)} 可用；候選任務共需 ${formatDuration(candidateMinutes)}。`,
   );
@@ -622,5 +639,7 @@ export function buildPlan(input: PlannerInput): PlanProposal {
     feasible: missed.length === 0,
     stats: { availableMinutes, plannedMinutes, candidateMinutes },
     availability: { ...availability, windows: mergeIntervals(availability.windows) },
+    ranked: candidates.map((c) => c.task.id),
+    pinnedTaskId: pinnedId,
   };
 }

@@ -5,6 +5,7 @@ import { ProposalView } from './ProposalView';
 import { ENERGY_LABEL, type Energy, type Settings, type Task } from '@/db/schema';
 import { applyProposal } from '@/db/plan';
 import { INCIDENT_LABEL, type Incident, type PlanProposal } from '@/engine/planner';
+import { buildOptions, type PlanOption } from '@/engine/options';
 import type { Occurrence } from '@/engine/recurrence';
 import { aiReady, explainProposal, resolveIncidentText } from '@/ai/resolve';
 import { estimateCostUsd, formatUsd } from '@/ai/pricing';
@@ -27,7 +28,7 @@ export interface IncidentSheetProps {
   settings: Settings;
   energy?: Energy;
   activeTaskId?: string;
-  buildProposal: (incident?: Incident) => PlanProposal;
+  buildProposal: (incident?: Incident, pinFirstTaskId?: string) => PlanProposal;
   /** 直接以「重新規劃」開啟並跳到預覽 */
   startWithReplan?: boolean;
 }
@@ -50,7 +51,7 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
   const [taskId, setTaskId] = useState('');
   const [remaining, setRemaining] = useState('30');
   const [restMinutes, setRestMinutes] = useState('20');
-  const [proposal, setProposal] = useState<PlanProposal | null>(null);
+  const [options, setOptions] = useState<PlanOption[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [applying, setApplying] = useState(false);
 
@@ -76,10 +77,10 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
     setTaskId(activeTaskId ?? openTasks.find((x) => x.status === 'in_progress')?.id ?? openTasks[0]?.id ?? '');
     if (startWithReplan) {
       setKind('replan');
-      setProposal(buildProposal({ type: 'replan' }));
+      setOptions(buildOptions((pin) => buildProposal({ type: 'replan' }, pin), tz));
     } else {
       setKind('overslept');
-      setProposal(null);
+      setOptions(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [open]);
@@ -142,14 +143,13 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
     try {
       const inc = incident ?? makeIncident();
       if ((inc.type === 'task_done' || inc.type === 'overrun') && !inc.taskId) throw new Error('請選擇任務');
-      setProposal(buildProposal(inc));
+      setOptions(buildOptions((pin) => buildProposal(inc, pin), tz));
     } catch (e) {
       setError(e instanceof Error ? e.message : '無法產生方案');
     }
   }
 
-  async function apply() {
-    if (!proposal) return;
+  async function apply(proposal: PlanProposal) {
     setApplying(true);
     setError(null);
     try {
@@ -163,16 +163,16 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
     }
   }
 
-  const title = proposal ? `重排預覽 · ${INCIDENT_LABEL[proposal.trigger]}` : '我遇到狀況了';
+  const title = options ? `重排 · ${INCIDENT_LABEL[options[0].proposal.trigger]}` : '我遇到狀況了';
   const explain = ai.ok ? (p: PlanProposal) => explainProposal(p, { nowMs: Date.now(), tz, settings }).then((r) => r.text) : undefined;
 
   return (
     <Sheet open={open} onClose={onClose} title={title}>
       <ErrorText>{error}</ErrorText>
-      {proposal ? (
+      {options ? (
         <div className="mt-2">
-          <ProposalView proposal={proposal} tz={tz} onApply={apply} onKeep={onClose} applying={applying} explain={explain} />
-          <button type="button" className="mt-3 w-full py-2 text-sm text-muted" onClick={() => setProposal(null)}>
+          <ProposalView options={options} tz={tz} onApply={apply} onKeep={onClose} applying={applying} explain={explain} />
+          <button type="button" className="w-full py-2 text-sm text-muted" onClick={() => setOptions(null)}>
             修改狀況描述
           </button>
         </div>
