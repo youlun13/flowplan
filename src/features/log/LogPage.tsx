@@ -135,7 +135,7 @@ export function LogPage() {
           </Button>
         </div>
       ) : (
-        <div className="mt-3 rounded-xl border border-line bg-surface p-3">
+        <div className="mt-3 rounded-xl border border-line bg-surface p-3" data-tour="log">
           <div className="flex gap-2">
             <Input value={quickTitle} onChange={(e) => setQuickTitle(e.target.value)} placeholder="現在開始做什麼？" onKeyDown={(e) => e.key === 'Enter' && quickStart()} />
             <Button variant="primary" onClick={quickStart} disabled={!quickTitle.trim() && !quickTask} className="shrink-0 whitespace-nowrap">

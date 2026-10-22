@@ -5,7 +5,7 @@ import { AppShell } from './components/AppShell';
 import { ToastProvider } from './hooks/useToast';
 import { getSettings, hasNoOwnData } from './db/repo';
 import { WelcomePage } from './features/welcome/WelcomePage';
-import { TourSheet } from './features/tour/TourSheet';
+import { CoachMarks } from './features/tour/CoachMarks';
 import { DashboardPage } from './features/dashboard/DashboardPage';
 import { CalendarPage } from './features/calendar/CalendarPage';
 import { TasksPage } from './features/tasks/TasksPage';
@@ -39,7 +39,7 @@ function SyncRunner() {
 
 /**
  * 第一次打開的門：這台裝置沒有自己的資料、沒登入、也還沒選過「本機使用」→ 先看歡迎畫面（登入 / 本機）。
- * 過了歡迎畫面、還沒看過導覽 → App 上面疊一層導覽。登入回呼頁永遠放行。沒有示範資料。
+ * 過了歡迎畫面、還沒看過導覽 → 在真正的介面上疊一層聚光燈導覽。登入回呼頁永遠放行。沒有示範資料。
  */
 function Gate() {
   const settings = useSettings();
@@ -52,7 +52,7 @@ function Gate() {
   return (
     <>
       <AppRoutes />
-      {!settings.tourDone && <TourSheet onDone={() => undefined} />}
+      {!settings.tourDone && <CoachMarks onDone={() => undefined} />}
     </>
   );
 }

@@ -225,7 +225,7 @@ export function CalendarPage() {
           <div className="mt-5 flex items-center justify-between">
             <h2 className="text-[15px] font-semibold">{selected === today ? '今天' : formatLocalDateZh(selected)}</h2>
             <div className="flex gap-2">
-              <Button onClick={() => setCreatingEvent({})} className="min-h-9 px-3 text-sm">
+              <Button onClick={() => setCreatingEvent({})} className="min-h-9 px-3 text-sm" data-tour="add-event">
                 <Plus size={16} /> 行程
               </Button>
               <Button variant="primary" onClick={() => setCreatingTask(true)} className="min-h-9 px-3 text-sm">

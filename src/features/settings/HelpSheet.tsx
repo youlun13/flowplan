@@ -106,7 +106,7 @@ export function HelpSheet({ open, onClose }: { open: boolean; onClose: () => voi
           onClose();
         }}
       >
-        再看一次第一次使用的導覽
+        再看一次導覽（會在畫面上一步步指給你看）
       </Button>
       <div className="space-y-2">
         {TOPICS.map((t, i) => (

@@ -33,12 +33,17 @@ with sync_playwright() as p:
     check("第一次打開：先看到歡迎畫面（登入 / 本機），不會直接塞示範資料", page.locator("text=下一步（").count() == 0)
     page.screenshot(path=f"{SHOTS}/00-welcome.png", full_page=True)
     page.click("[data-testid='welcome-local']")
-    page.wait_for_selector("[data-testid='tour']")
-    check("第一次進入：出現導覽（不是示範資料）", page.locator("[data-testid='tour'] >> text=今日：現在該做什麼").count() == 1)
-    page.screenshot(path=f"{SHOTS}/00b-tour.png", full_page=True)
-    for _ in range(4):
+    page.wait_for_selector("[data-testid='tour-callout']")
+    page.wait_for_selector("[data-testid='tour-spotlight']")
+    check("第一次進入：介面上出現聚光燈導覽（框住下一步卡片 + 說明框），不是示範資料", page.locator("[data-testid='tour-callout'] >> text=現在該做什麼").count() == 1)
+    page.screenshot(path=f"{SHOTS}/00b-tour.png")
+    spotlights = 0
+    for _ in range(6):
         page.click("[data-testid='tour-next']")
-        page.wait_for_timeout(150)
+        page.wait_for_timeout(400)
+        spotlights += page.locator("[data-testid='tour-spotlight']").count()
+    check("導覽會切頁並框住各頁的元件", spotlights >= 5 and "#/log" in page.url or spotlights >= 5)
+    page.screenshot(path=f"{SHOTS}/00c-tour-last.png")
     check("導覽最後一頁是「開始使用」", page.locator("[data-testid='tour-next']:has-text('開始使用')").count() == 1)
     page.click("[data-testid='tour-next']")
     page.wait_for_selector("[data-testid='tour']", state="detached")

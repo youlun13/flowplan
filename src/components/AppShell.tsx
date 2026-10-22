@@ -14,7 +14,7 @@ export function AppShell() {
   return (
     <div className="min-h-dvh md:flex">
       {/* 桌機：左側導覽列 */}
-      <nav className="safe-top hidden w-20 shrink-0 border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-dvh md:flex-col md:items-center md:gap-1 md:pt-5" aria-label="主選單">
+      <nav className="safe-top hidden w-20 shrink-0 border-r border-line bg-surface md:sticky md:top-0 md:flex md:h-dvh md:flex-col md:items-center md:gap-1 md:pt-5" aria-label="主選單" data-tour="nav">
         <div className="mb-4 text-sm font-semibold text-accent">FlowPlan</div>
         {NAV.map(({ to, label, Icon, end }) => (
           <NavLink
@@ -36,7 +36,7 @@ export function AppShell() {
       </main>
 
       {/* 手機：底部導覽 */}
-      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 backdrop-blur md:hidden" aria-label="主選單">
+      <nav className="safe-bottom fixed inset-x-0 bottom-0 z-40 border-t border-line bg-surface/95 backdrop-blur md:hidden" aria-label="主選單" data-tour="nav">
         <div className="mx-auto flex max-w-3xl">
           {NAV.map(({ to, label, Icon, end }) => (
             <NavLink

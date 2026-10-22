@@ -112,7 +112,7 @@ export function DashboardPage() {
         <div className="h-full rounded-full bg-accent transition-[width]" style={{ width: `${completion.ratio * 100}%` }} />
       </div>
 
-      <div className="mt-4 flex items-center justify-between gap-3">
+      <div className="mt-4 flex items-center justify-between gap-3" data-tour="energy">
         <span className="text-sm text-muted">現在的精力</span>
         <Segmented
           size="sm"
@@ -140,7 +140,7 @@ export function DashboardPage() {
       )}
 
       {/* 下一步 */}
-      <section className="mt-4 rounded-2xl bg-accent px-4 py-4 text-accent-ink">
+      <section className="mt-4 rounded-2xl bg-accent px-4 py-4 text-accent-ink" data-tour="next">
         <div className="flex items-center justify-between">
           <span className="text-sm opacity-85">{currentBlock ? '下一步（已套用的排程）' : '下一步（建議，尚未排程）'}</span>
           {currentBlock && (
@@ -192,7 +192,7 @@ export function DashboardPage() {
         )}
       </section>
 
-      <Button full className="mt-3" onClick={() => setIncident({ replan: false })}>
+      <Button full className="mt-3" onClick={() => setIncident({ replan: false })} data-tour="incident">
         <AlertTriangle size={18} className="text-warn" /> 我遇到狀況了
       </Button>
 
@@ -248,7 +248,7 @@ export function DashboardPage() {
       <Section
         title={`今天剩餘（${remaining.length}）`}
         aside={
-          <button type="button" onClick={() => setCreating(true)} className="flex items-center gap-1 text-accent">
+          <button type="button" onClick={() => setCreating(true)} className="flex items-center gap-1 text-accent" data-tour="add-task">
             <Plus size={16} /> 新增
           </button>
         }
