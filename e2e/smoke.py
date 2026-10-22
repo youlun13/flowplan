@@ -11,8 +11,12 @@ SHOTS = sys.argv[2] if len(sys.argv) > 2 else "e2e/shots"
 import os
 os.makedirs(SHOTS, exist_ok=True)
 
+TPE = datetime.timezone(datetime.timedelta(hours=8))
+# 瀏覽器裡的「現在」固定在今天 10:00（台北），讓深夜跑測試時今天仍有可用時間；計時器照常跑。
+FIXED_NOW = datetime.datetime.now(TPE).replace(hour=10, minute=0, second=0, microsecond=0)
+
 def tpe_today(offset=0):
-    now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8))) + datetime.timedelta(days=offset)
+    now = FIXED_NOW + datetime.timedelta(days=offset)
     return now.strftime("%Y-%m-%d")
 
 results = []
@@ -24,6 +28,7 @@ with sync_playwright() as p:
     browser = p.chromium.launch()
     ctx = browser.new_context(viewport={"width": 390, "height": 844}, device_scale_factor=2, is_mobile=True, has_touch=True, locale="zh-TW", timezone_id="Asia/Taipei")
     page = ctx.new_page()
+    page.clock.set_fixed_time(FIXED_NOW)
     errors = []
     page.on("pageerror", lambda e: errors.append(f"PAGEERROR {getattr(e, 'message', e)} :: {str(getattr(e, 'stack', ''))[:400]}"))
     page.on("console", lambda m: errors.append(f"{m.text} @ {m.location.get('url','')}:{m.location.get('lineNumber','')}") if m.type == "error" else None)
@@ -196,7 +201,7 @@ with sync_playwright() as p:
     page.wait_for_selector("text=看看怎麼辦")
     page.click("button[aria-pressed]:has-text('臨時有事')")
     # 用「現在 + 30 分鐘」起的一段，確保它還沒過、會出現在今日安排裡（跨午夜就退回固定時段）
-    _now = datetime.datetime.now(datetime.timezone(datetime.timedelta(hours=8)))
+    _now = FIXED_NOW
     _s = _now + datetime.timedelta(minutes=30); _e = _now + datetime.timedelta(minutes=90)
     lost_start, lost_end = (_s.strftime("%H:%M"), _e.strftime("%H:%M")) if _e.date() == _now.date() else ("10:00", "12:00")
     page.locator("div[role='dialog'] input[type='time']").nth(0).fill(lost_start)
@@ -447,11 +452,12 @@ with sync_playwright() as p:
     check("驗收12 匯出備份不含通關密語（更不含金鑰）", "e2e-secret" not in json.dumps(data) and data["settings"]["ai"].get("proxySecret") is None)
     page.screenshot(path=f"{SHOTS}/07-settings.png", full_page=True)
 
-    check("沒有示範資料就不會出現「刪除示範資料」", page.locator("button:has-text('刪除示範資料')").count() == 0)
+    check("設定頁沒有任何示範資料相關的按鈕", page.locator("button:has-text('示範')").count() == 0)
 
     # 桌機尺寸
     ctx2 = browser.new_context(viewport={"width": 1280, "height": 900}, locale="zh-TW", timezone_id="Asia/Taipei")
     pg2 = ctx2.new_page()
+    pg2.clock.set_fixed_time(FIXED_NOW)
     pg2.goto(BASE)
     pg2.wait_for_selector("[data-testid='welcome-local']")
     pg2.click("[data-testid='welcome-local']")

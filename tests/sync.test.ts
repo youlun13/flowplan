@@ -159,4 +159,21 @@ describe('客戶端同步（兩台裝置透過同一個 Worker）', () => {
     expect(fresh.isOpen()).toBe(true);
     fresh.close();
   });
+
+  it('雲端留著舊版示範資料：不套用到本機，並排一個刪除推回雲端', async () => {
+    const kv = memoryKv();
+    const env = { ...baseEnv, FLOWPLAN_KV: kv };
+    const settings = await updateSettings({ ai: { enabled: false, provider: 'none', proxyUrl: 'https://w', proxySecret: 's', model: 'claude-haiku-5-5', maxOutputTokens: 512, dailyLimit: 30 } });
+    const transport = makeTransport(settings, fetchVia(env));
+    const rec = { id: 'demo-1', title: '示範任務', status: 'todo', priority: 'P2', estimatedMinutes: 30, energyRequired: 'medium', splittable: true, dependencies: [], deferCount: 0, isDemo: true, createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' };
+    await transport.push({ baseVersion: 0, records: { tasks: { 'demo-1': rec } }, tombstones: {} });
+    await db.syncQueue.clear();
+    await syncNow(transport); // pull
+    expect(await db.tasks.get('demo-1')).toBeUndefined();
+    expect((await db.syncQueue.toArray()).some((q) => q.key === 'tasks:demo-1' && q.deletedAt)).toBe(true);
+    await syncNow(transport); // push the tombstone
+    const cloud = JSON.parse((await kv.get('snapshot')) as string);
+    expect(cloud.records.tasks['demo-1']).toBeUndefined();
+    expect(cloud.tombstones['tasks:demo-1']).toBeTruthy();
+  });
 });

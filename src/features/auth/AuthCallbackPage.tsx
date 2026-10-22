@@ -12,7 +12,7 @@ import { Button } from '@/components/ui';
 import { PageHeader } from '@/components/AppShell';
 import { LOGIN_ERROR_TEXT, proxyUrlOf, setSession, verifySessionToken, type MeResult } from '@/auth/session';
 import { DEFAULT_PROXY_URL } from '@/config';
-import { clearAllData, countAll, deleteDemoData, getSettings, hasNoOwnData, updateSettings } from '@/db/repo';
+import { clearAllData, countAll, getSettings, hasNoOwnData, updateSettings } from '@/db/repo';
 import { cloudHasData, enqueueEverything, getSyncMeta, makeTransport, replaceWithRemote, resetSyncVersion, runSync, setSyncAccount } from '@/sync/engine';
 import { useToast } from '@/hooks/useToast';
 
@@ -36,8 +36,8 @@ export async function switchConflict(me: MeResult): Promise<string | null> {
  * 目標：不管哪台裝置，登入同一個帳號就是原本的資料。三種情況：
  *   a. 同一個帳號在這台裝置登入過 → 什麼都不動，繼續同步
  *   b. 這台裝置第一次用這個帳號，雲端已有資料（例如第二台裝置）→ 以雲端為準：
- *      本機只有示範資料就直接清掉、設定也採雲端的；本機有自己的資料則合併進雲端（設定保留本機）
- *   c. 雲端是空的（這個帳號第一次用）→ 把本機資料（含示範）整包推上去，這台裝置就是起點
+ *      本機沒有資料就直接以雲端為準、設定也採雲端的；本機有自己的資料則合併進雲端（設定保留本機）
+ *   c. 雲端是空的（這個帳號第一次用）→ 把本機資料整包推上去，這台裝置就是起點
  *   wipeLocal：換帳號時先清掉本機（上一個人的資料），再走 b
  */
 export async function completeLogin(me: MeResult, opts: { wipeLocal: boolean; fetchImpl?: typeof fetch }): Promise<string> {
@@ -63,8 +63,7 @@ export async function completeLogin(me: MeResult, opts: { wipeLocal: boolean; fe
       how = 'continue';
     } else if (await cloudHasData(transport)) {
       if (opts.wipeLocal || (await hasNoOwnData())) {
-        // 新裝置（或剛清過）：雲端才是本尊。舊版殘留的示範資料不推上去，設定採雲端的
-        await deleteDemoData();
+        // 新裝置（或剛清過）：雲端才是本尊，設定採雲端的
         await replaceWithRemote(transport, { preferRemoteSettings: true });
         how = 'adopt-cloud';
       } else {
@@ -80,7 +79,7 @@ export async function completeLogin(me: MeResult, opts: { wipeLocal: boolean; fe
   const current = await getSettings();
   await updateSettings({
     onboarded: true,
-    demoDataLoaded: true, // 登入者永遠不會被塞示範資料
+    demoDataLoaded: true,
     sync: { enabled: me.features.sync, auto: true },
     ai: { ...current.ai, enabled: me.features.ai ? true : current.ai.enabled, provider: me.features.ai ? 'claude' : current.ai.provider },
   });

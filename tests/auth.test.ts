@@ -301,7 +301,7 @@ describe('App 端：登入後的同步與帳號切換', () => {
     // Alice 的雲端沒被動到
     expect(Object.keys(JSON.parse((await kv.get('u:google:111:snapshot')) as string).records.tasks)).toHaveLength(1);
   });
-  it('新裝置登入既有帳號：示範資料不推上去、設定採雲端的、雲端任務拉下來（登入就是原本的）', async () => {
+  it('新裝置登入既有帳號：設定採雲端的、雲端任務拉下來（登入就是原本的）', async () => {
     const kv = memoryKv();
     const env = { ...baseEnv, FLOWPLAN_KV: kv };
     const f = viaWorker(env);
@@ -311,10 +311,9 @@ describe('App 端：登入後的同步與帳號切換', () => {
       tasks: { 'a-1': { id: 'a-1', title: 'Alice 的任務', status: 'todo', priority: 'P2', estimatedMinutes: 30, energyRequired: 'medium', splittable: true, dependencies: [], deferCount: 0, createdAt: '2026-10-01T00:00:00.000Z', updatedAt: '2026-10-01T00:00:00.000Z' } },
       settings: { default: { ...(await getSettings()), workStart: '09:30', focusMinutes: 60, ai: { enabled: true, provider: 'claude', model: 'claude-haiku-5-5', maxOutputTokens: 1024, dailyLimit: 30, proxyUrl: 'https://old-device' }, sync: { enabled: true, auto: true }, updatedAt: '2026-10-01T00:00:00.000Z' } },
     }, tombstones: {} }) }), env);
-    // 這台新裝置：只有示範資料 + 剛寫入的預設設定（updatedAt 比雲端新）
+    // 這台新裝置：沒有資料，只有剛寫入的預設設定（updatedAt 比雲端新）
     await updateSettings({ ai: { enabled: false, provider: 'none', proxyUrl: W, model: 'claude-haiku-5-5', maxOutputTokens: 512, dailyLimit: 30 } });
-    await createTask({ title: '示範任務', plannedDate: '2026-10-21', isDemo: true } as never);
-    expect((await db.tasks.toArray()).length).toBe(1);
+    expect((await db.tasks.toArray()).length).toBe(0);
 
     const alice = await verifySessionToken(W, aliceToken, f);
     const msg = await completeLogin(alice, { wipeLocal: false, fetchImpl: f });
@@ -325,7 +324,7 @@ describe('App 端：登入後的同步與帳號切換', () => {
     expect(s.focusMinutes).toBe(60);
     expect(s.ai.proxyUrl).toBe(W); // 本機的 Worker 網址保留，不被雲端的舊網址蓋掉
     expect(s.sync).toEqual({ enabled: true, auto: true });
-    // 推送後雲端仍然沒有示範任務
+    // 推送後雲端只有 Alice 的任務
     await syncNow(makeTransport(await getSettings(), f));
     const cloud = JSON.parse((await kv.get('u:google:111:snapshot')) as string);
     expect(Object.values(cloud.records.tasks).map((t) => (t as { title: string }).title)).toEqual(['Alice 的任務']);

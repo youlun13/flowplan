@@ -217,6 +217,15 @@ export async function applySnapshot(snapshot: Snapshot): Promise<{ upserted: num
         const remote = snapshot.records?.[table] ?? {};
         for (const [id, rec] of Object.entries(remote)) {
           if (pending.has(`${table}:${id}`)) continue;
+          if ((rec as { isDemo?: boolean }).isDemo === true) {
+            // 舊版留在雲端的示範資料：不收，反而排一個刪除推回去，讓雲端也乾淨
+            if (await t.get(id)) {
+              await t.delete(id);
+              deleted += 1;
+            }
+            await db.syncQueue.put({ key: `${table}:${id}`, table, id, deletedAt: nowIso(), queuedAt: nowIso() });
+            continue;
+          }
           const local = (await t.get(id)) as Rec | undefined;
           if (local && stampOf(local) >= stampOf(rec)) continue;
           const toPut = table === 'settings' ? mergeSettings(local as Settings | undefined, rec as unknown as Settings) : rec;

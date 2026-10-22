@@ -3,7 +3,7 @@ import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-d
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AppShell } from './components/AppShell';
 import { ToastProvider } from './hooks/useToast';
-import { getSettings, hasNoOwnData } from './db/repo';
+import { getSettings, hasNoOwnData, purgeDemoData } from './db/repo';
 import { WelcomePage } from './features/welcome/WelcomePage';
 import { CoachMarks } from './features/tour/CoachMarks';
 import { DashboardPage } from './features/dashboard/DashboardPage';
@@ -75,6 +75,7 @@ function AppRoutes() {
 
 async function bootstrap(): Promise<void> {
   await getSettings(); // 確保設定列存在且欄位完整
+  await purgeDemoData(); // 舊版本的示範資料：直接刪掉（會同步刪到雲端）
   // 要求瀏覽器盡量不要自動清除本機資料（iOS Safari 對加入主畫面的 PWA 最有效）
   try {
     await navigator.storage?.persist?.();

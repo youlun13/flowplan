@@ -77,9 +77,10 @@ export async function importBackup(backup: Backup, mode: ImportMode): Promise<Im
         db.planRevisions.clear(),
       ]);
     }
-    await db.tasks.bulkPut(backup.tasks);
-    await db.events.bulkPut(backup.events);
-    await db.logs.bulkPut(backup.logs);
+    // 舊備份裡的示範資料不匯入
+    await db.tasks.bulkPut(backup.tasks.filter((t) => !t.isDemo));
+    await db.events.bulkPut(backup.events.filter((e) => !e.isDemo));
+    await db.logs.bulkPut(backup.logs.filter((l) => !l.isDemo));
     await db.dailyStates.bulkPut(backup.dailyStates);
     await db.workBlocks.bulkPut(backup.workBlocks);
     await db.planRevisions.bulkPut(backup.planRevisions);

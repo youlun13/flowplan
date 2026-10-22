@@ -364,22 +364,30 @@ export async function setDailyState(date: LocalDate, patch: Partial<Omit<DailySt
 
 /* ------------------------------------ Demo ------------------------------------ */
 
-/** 一鍵刪除示範資料。settings.demoDataLoaded 保持 true，代表「已經示範過」，之後不會再自動載入 */
-export async function deleteDemoData(): Promise<void> {
-  await db.transaction('rw', db.tasks, db.events, db.logs, async () => {
-    await db.tasks.filter((t) => Boolean(t.isDemo)).delete();
-    await db.events.filter((e) => Boolean(e.isDemo)).delete();
-    await db.logs.filter((l) => Boolean(l.isDemo)).delete();
+/**
+ * 示範資料已經從產品拿掉：舊版本留下的（標 isDemo）在每次啟動時自動刪除。
+ * 走正常的刪除路徑，所以會產生 tombstone 同步到雲端與其他裝置。回傳刪了幾筆。
+ */
+export async function purgeDemoData(): Promise<number> {
+  const [tasks, events, logs] = await Promise.all([
+    db.tasks.filter((t) => Boolean(t.isDemo)).primaryKeys(),
+    db.events.filter((e) => Boolean(e.isDemo)).primaryKeys(),
+    db.logs.filter((l) => Boolean(l.isDemo)).primaryKeys(),
+  ]);
+  const n = tasks.length + events.length + logs.length;
+  if (n === 0) return 0;
+  await db.transaction('rw', [db.tasks, db.events, db.logs, db.workBlocks], async () => {
+    for (const id of tasks) await db.workBlocks.where('taskId').equals(id).delete();
+    await db.tasks.bulkDelete(tasks);
+    await db.events.bulkDelete(events);
+    await db.logs.bulkDelete(logs);
   });
+  return n;
 }
 
-/** 這台裝置沒有自己的資料（舊版留下的示範資料不算）；歡迎畫面與「登入既有帳號時以雲端為準」用 */
+/** 這台裝置沒有自己的資料；歡迎畫面與「登入既有帳號時以雲端為準」用 */
 export async function hasNoOwnData(): Promise<boolean> {
-  const [tasks, events, logs] = await Promise.all([
-    db.tasks.filter((t) => !t.isDemo).count(),
-    db.events.filter((e) => !e.isDemo).count(),
-    db.logs.filter((l) => !l.isDemo).count(),
-  ]);
+  const [tasks, events, logs] = await Promise.all([db.tasks.count(), db.events.count(), db.logs.count()]);
   return tasks + events + logs === 0;
 }
 

@@ -7,7 +7,6 @@ import {
   createEvent,
   createTask,
   deferTask,
-  deleteDemoData,
   deleteTask,
   getSettings,
   setTaskDone,
@@ -152,14 +151,22 @@ describe('備份', () => {
 });
 
 describe('舊版殘留的示範資料', () => {
-  it('不再自動載入；舊資料標 isDemo 的仍可一鍵刪除，自己的資料不受影響；hasNoOwnData 忽略示範資料', async () => {
-    const { hasNoOwnData } = await import('@/db/repo');
+  it('啟動時自動刪掉（含其區塊），自己的資料不受影響；舊備份匯入時也會濾掉', async () => {
+    const { purgeDemoData, hasNoOwnData } = await import('@/db/repo');
+    const { importBackup, parseBackup, exportBackupJson } = await import('@/db/backup');
     expect(await hasNoOwnData()).toBe(true);
-    await createTask({ title: '舊示範', plannedDate: '2026-10-21', isDemo: true } as never);
-    expect(await hasNoOwnData()).toBe(true);
+    const demo = await createTask({ title: '舊示範', plannedDate: '2026-10-21', isDemo: true } as never);
     await createTask({ title: '自己的', plannedDate: '2026-10-21' });
-    expect(await hasNoOwnData()).toBe(false);
-    await deleteDemoData();
+    await db.workBlocks.put({ id: 'wb', taskId: demo.id, date: '2026-10-21', startAt: '2026-10-21T01:00:00.000Z', endAt: '2026-10-21T02:00:00.000Z', status: 'planned', isMinimum: false, createdAt: '2026-10-21T00:00:00.000Z', updatedAt: '2026-10-21T00:00:00.000Z' });
+    expect(await purgeDemoData()).toBe(1);
+    expect((await db.tasks.toArray()).map((t) => t.title)).toEqual(['自己的']);
+    expect(await db.workBlocks.count()).toBe(0);
+    expect(await purgeDemoData()).toBe(0);
+    // 舊備份裡的示範資料不匯入
+    const json = await exportBackupJson();
+    const backup = parseBackup(json);
+    backup.tasks.push({ ...backup.tasks[0], id: 'demo-2', title: '備份裡的示範', isDemo: true });
+    await importBackup(backup, 'replace');
     expect((await db.tasks.toArray()).map((t) => t.title)).toEqual(['自己的']);
   });
 });

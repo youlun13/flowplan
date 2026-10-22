@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { PageHeader } from '@/components/AppShell';
 import { Button, Confirm, ErrorText, Field, Input, Segmented, Select, Sheet, Textarea, Toggle } from '@/components/ui';
-import { clearAllData, countAll, deleteDemoData, updateSettings } from '@/db/repo';
+import { clearAllData, countAll, updateSettings } from '@/db/repo';
 import { exportBackupJson, importBackup, parseBackup, type ImportMode } from '@/db/backup';
-import { db } from '@/db/db';
 import type { Settings } from '@/db/schema';
 import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
@@ -31,7 +30,7 @@ export function SettingsPage() {
   const [draft, setDraft] = useState<Settings>(settings);
   const [error, setError] = useState<string | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [confirm, setConfirm] = useState<null | 'demo' | 'clear' | 'import' | 'replace-remote' | 'delete-remote' | 'logout' | 'logout-wipe' | 'paste-switch'>(null);
+  const [confirm, setConfirm] = useState<null | 'clear' | 'import' | 'replace-remote' | 'delete-remote' | 'logout' | 'logout-wipe' | 'paste-switch'>(null);
   const [pendingMe, setPendingMe] = useState<{ me: MeResult; previous: string } | null>(null);
   const [providers, setProviders] = useState<ProvidersResult | 'loading' | { error: string } | null>(null);
   const [pasteOpen, setPasteOpen] = useState(false);
@@ -171,7 +170,6 @@ export function SettingsPage() {
     }
   }
   const fileRef = useRef<HTMLInputElement>(null);
-  const demoCount = useLiveQuery(async () => (await db.tasks.filter((t) => Boolean(t.isDemo)).count()) + (await db.events.filter((e) => Boolean(e.isDemo)).count()), []) ?? 0;
   const counts = useLiveQuery(() => countAll(), []);
 
   useEffect(() => {
@@ -516,11 +514,6 @@ export function SettingsPage() {
         </div>
         <p className="mt-3 text-xs text-muted">iPhone 提醒：Safari 分頁與「加入主畫面」的 App 是兩份各自獨立的資料。請固定用同一個入口，要搬資料就用匯出 / 匯入。</p>
         <div className="mt-4 flex flex-wrap gap-2">
-          {demoCount > 0 && (
-            <Button variant="danger" onClick={() => setConfirm('demo')}>
-              刪除示範資料（{demoCount}）
-            </Button>
-          )}
           <Button variant="danger" onClick={() => setConfirm('clear')}>
             清除全部資料
           </Button>
@@ -590,19 +583,6 @@ export function SettingsPage() {
         <Textarea readOnly value={copyText ?? ''} rows={12} onFocus={(e) => e.currentTarget.select()} className="font-mono text-xs" />
       </Sheet>
 
-      <Confirm
-        open={confirm === 'demo'}
-        title="刪除所有示範資料？"
-        message="標記為示範的任務、行程與紀錄會被刪除，你自己新增的資料不受影響。"
-        confirmLabel="刪除示範資料"
-        danger
-        onConfirm={async () => {
-          await deleteDemoData();
-          setConfirm(null);
-          toast.show('已刪除示範資料');
-        }}
-        onCancel={() => setConfirm(null)}
-      />
       <Confirm
         open={confirm === 'clear'}
         title="清除全部資料？"
