@@ -180,8 +180,13 @@ describe('降級鏈（驗收 10：無 key 也能用）', () => {
     expect(f).not.toHaveBeenCalled();
   });
 
-  it('AI 關閉時用規則結果並附說明；完全沒 key 也不會壞', async () => {
-    const settings = await getSettings();
+  it('預設 AI 開啟但還沒登入 / 沒密語 → 退回規則並說明；手動關閉也一樣；完全沒 key 也不會壞', async () => {
+    const fresh = await getSettings();
+    expect(fresh.ai.enabled).toBe(true); // 預設開啟
+    const r0 = await resolveIncidentText('臨時有事', { nowMs, tz: TPE, tasks: [], occurrences: [], settings: fresh });
+    expect(r0.source).toBe('rules');
+    expect(r0.notice).toContain('還沒設定 AI 助手');
+    const settings = await updateSettings({ ai: { ...fresh.ai, enabled: false } });
     const r = await resolveIncidentText('臨時有事', { nowMs, tz: TPE, tasks: [], occurrences: [], settings });
     expect(r.source).toBe('rules');
     expect(r.notice).toContain('AI 助手未啟用');

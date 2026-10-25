@@ -237,7 +237,8 @@ export function defaultSettings(now = new Date().toISOString()): Settings {
     preferDeadlineFirst: true,
     energyMatching: true,
     allowSplitting: true,
-    ai: { enabled: false, provider: 'none', model: 'claude-haiku-5-5', maxOutputTokens: 1024, dailyLimit: 30 },
+    // 預設開啟：沒登入、沒密語時會自動退回規則解析，不會出錯也不會花錢
+    ai: { enabled: true, provider: 'claude', model: 'claude-haiku-5-5', maxOutputTokens: 1024, dailyLimit: 30 },
     sync: { enabled: false, auto: true },
     useCalibration: true,
     onboarded: false,

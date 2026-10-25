@@ -291,7 +291,7 @@ with sync_playwright() as p:
     # 設定 AI（驗收 12：瀏覽器端只有通關密語）
     page.click("a[href='#/settings']:visible")
     page.wait_for_selector("text=每日時間")
-    page.click("div:has(> span:text('啟用 AI 助手')) >> nth=0") if False else page.click("button[role='switch']:has-text('啟用 AI 助手')")
+    check("AI 助手預設是開啟的", page.locator("button[role='switch']:has-text('啟用 AI 助手')[aria-checked='true']").count() == 1)
     page.fill("input[placeholder*='workers.dev']", WORKER)
     page.fill("input[type='password']", "e2e-secret")
     page.click("button:has-text('儲存設定')")
