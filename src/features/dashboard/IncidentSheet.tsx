@@ -42,7 +42,8 @@ export interface IncidentSheetProps {
 export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, settings, energy: dailyEnergy, activeTaskId, buildProposal, startWithReplan }: IncidentSheetProps) {
   const toast = useToast();
   const nowTime = toLocalTime(Date.now(), tz);
-  const [kind, setKind] = useState<Kind>('overslept');
+  // 不預選：使用者自己點一種；再點一次取消選擇
+  const [kind, setKind] = useState<Kind | null>(null);
   const [wakeTime, setWakeTime] = useState(nowTime);
   const [lostStart, setLostStart] = useState(nowTime);
   const [lostEnd, setLostEnd] = useState(minutesToTime(timeToMinutes(nowTime) + 120));
@@ -79,7 +80,7 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
       setKind('replan');
       setOptions(buildOptions((args) => buildProposal({ type: 'replan' }, args), { tz, tasks, nowMs: Date.now() }));
     } else {
-      setKind('overslept');
+      setKind(null);
       setOptions(null);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -116,6 +117,7 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
   }
 
   function makeIncident(): Incident {
+    if (!kind) throw new Error('先選一種狀況');
     switch (kind) {
       case 'overslept':
         return { type: 'overslept', wakeTime };
@@ -239,7 +241,7 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
                   <button
                     key={k}
                     type="button"
-                    onClick={() => setKind(k)}
+                    onClick={() => setKind(kind === k ? null : k)}
                     aria-pressed={kind === k}
                     className={cx('rounded-lg px-3 py-2 text-sm font-medium', kind === k ? 'bg-accent-soft text-accent' : 'bg-surface-2 text-muted')}
                   >
@@ -297,8 +299,9 @@ export function IncidentSheet({ open, onClose, today, tz, tasks, occurrences, se
                 </Field>
               )}
               {kind === 'replan' && <p className="text-sm text-muted">不改變任何狀態，只依目前的任務、行程與精力重新計算今天剩下的時間。</p>}
+              {kind === null && <p className="text-sm text-muted">選一種狀況，或在上面用一句話描述。</p>}
 
-              <Button full variant="primary" onClick={() => preview()}>
+              <Button full variant="primary" onClick={() => preview()} disabled={kind === null}>
                 <Sparkles size={16} /> 看看怎麼辦
               </Button>
             </>

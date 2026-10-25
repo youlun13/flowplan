@@ -118,7 +118,7 @@ with sync_playwright() as p:
     m = re.search(r"已完成 (\d+) / (\d+)", before)
     done0, total0 = int(m.group(1)), int(m.group(2))
     page.locator("button[role='checkbox'][aria-checked='false']").first.click()
-    page.wait_for_timeout(300)
+    page.wait_for_selector(f"header >> text=已完成 {done0 + 1} / {total0}", timeout=8000)
     after = page.locator("header").inner_text()
     m2 = re.search(r"已完成 (\d+) / (\d+)", after)
     check("驗收3 勾選完成即時更新進度", int(m2.group(1)) == done0 + 1 and int(m2.group(2)) == total0)
@@ -199,6 +199,10 @@ with sync_playwright() as p:
     # 臨時有事 15:00–17:00 之外再加一段，確認預覽顯示變更
     page.click("button:has-text('我遇到狀況了')")
     page.wait_for_selector("text=看看怎麼辦")
+    check("狀況面板不預選任何一種，按鈕先停用", page.locator("button[aria-pressed='true']").count() == 0 and page.locator("button:has-text('看看怎麼辦')[disabled]").count() == 1)
+    page.click("button[aria-pressed]:has-text('臨時有事')")
+    page.click("button[aria-pressed]:has-text('臨時有事')")
+    check("再點一次取消選擇", page.locator("button[aria-pressed='true']").count() == 0)
     page.click("button[aria-pressed]:has-text('臨時有事')")
     # 用「現在 + 30 分鐘」起的一段，確保它還沒過、會出現在今日安排裡（跨午夜就退回固定時段）
     _now = FIXED_NOW
@@ -443,6 +447,14 @@ with sync_playwright() as p:
     check("設定頁可開啟使用說明", page.locator("text=我遇到狀況了").count() >= 1)
     page.keyboard.press("Escape")
     page.wait_for_timeout(200)
+    page.click("[data-testid='replay-tour']")
+    page.wait_for_selector("[data-testid='tour-callout']")
+    page.wait_for_selector("[data-testid='tour-spotlight']", timeout=8000)
+    check("設定頁可以重看導覽（回到今日頁框住下一步卡片）", page.locator("[data-testid='tour-spotlight']").count() == 1 and "#/settings" not in page.url)
+    page.click("[data-testid='tour-skip']")
+    page.wait_for_selector("[data-testid='tour']", state="detached")
+    page.click("a[href='#/settings']:visible")
+    page.wait_for_selector("text=每日時間")
     with page.expect_download() as dl:
         page.click("button:has-text('匯出 JSON 備份')")
     path = dl.value.path()

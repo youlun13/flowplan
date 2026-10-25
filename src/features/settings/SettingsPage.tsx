@@ -8,7 +8,7 @@ import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { formatDateTimeZh } from '@/lib/time';
 import { useLiveQuery } from 'dexie-react-hooks';
-import { BookOpen } from 'lucide-react';
+import { BookOpen, Compass } from 'lucide-react';
 import { HelpSheet } from './HelpSheet';
 import { DEFAULT_MODEL, MODEL_PRICING, formatUsd } from '@/ai/pricing';
 import { makeProvider } from '@/ai/resolve';
@@ -280,6 +280,22 @@ export function SettingsPage() {
         <span className="flex-1">
           <span className="block text-[15px] font-semibold">使用說明</span>
           <span className="block text-xs text-muted">每天怎麼用、狀況怎麼處理、欄位怎麼填、備份注意事項</span>
+        </span>
+        <span className="text-muted">›</span>
+      </button>
+      <button
+        type="button"
+        onClick={async () => {
+          await updateSettings({ tourDone: false });
+          toast.show('導覽開始');
+        }}
+        className="mt-2 flex w-full items-center gap-3 rounded-xl border border-line bg-surface px-4 py-3 text-left active:bg-surface-2"
+        data-testid="replay-tour"
+      >
+        <Compass size={20} className="shrink-0 text-accent" />
+        <span className="flex-1">
+          <span className="block text-[15px] font-semibold">看一次導覽</span>
+          <span className="block text-xs text-muted">在畫面上一步步指給你看每個地方在做什麼（第一次使用時會自動出現）</span>
         </span>
         <span className="text-muted">›</span>
       </button>

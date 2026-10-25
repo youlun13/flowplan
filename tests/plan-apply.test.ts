@@ -107,3 +107,31 @@ describe('套用 / 撤銷（驗收 11）', () => {
     expect(await db.workBlocks.count()).toBe(0);
   });
 });
+
+describe('同一毫秒內連續套用', () => {
+  it('第二次的 createdAt 一定比第一次晚，撤銷會撤到最後一次', async () => {
+    const { applyProposal, latestRevisionForDate } = await import('@/db/plan');
+    const { buildPlan } = await import('@/engine/planner');
+    const { createTask, clearAllData } = await import('@/db/repo');
+    const { localDateTimeToMs } = await import('@/lib/time');
+    await clearAllData();
+    const TPE = 'Asia/Taipei';
+    const nowMs = localDateTimeToMs('2026-10-21', '09:00', TPE);
+    await createTask({ title: 'a', plannedDate: '2026-10-21', estimatedMinutes: 30 });
+    const settings = { workStart: '08:00', workEnd: '23:00', sleepStart: '00:00', sleepEnd: '07:30', bufferMinutes: 10, breakMinutes: 10, focusMinutes: 45, preferDeadlineFirst: true, energyMatching: true, allowSplitting: true } as const;
+    const { db } = await import('@/db/db');
+    const tasks = await db.tasks.toArray();
+    const realNow = Date.now;
+    Date.now = () => nowMs; // 凍結時鐘，模擬同一毫秒
+    try {
+      const p1 = buildPlan({ nowMs, tz: TPE, settings, tasks, busy: [], existingBlocks: [] });
+      const r1 = await applyProposal(p1, { nowMs, tz: TPE });
+      const p2 = buildPlan({ nowMs, tz: TPE, settings, tasks, busy: [], existingBlocks: await db.workBlocks.toArray(), incident: { type: 'rest', minutes: 10 } });
+      const r2 = await applyProposal(p2, { nowMs, tz: TPE });
+      expect(r2.createdAt > r1.createdAt).toBe(true);
+      expect((await latestRevisionForDate('2026-10-21'))?.id).toBe(r2.id);
+    } finally {
+      Date.now = realNow;
+    }
+  });
+});

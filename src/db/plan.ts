@@ -94,10 +94,14 @@ export async function applyProposal(proposal: PlanProposal, opts: { nowMs: numbe
     if (proposal.effects.setWakeTime) await setDailyState(proposal.date, { wakeTime: proposal.effects.setWakeTime });
 
     payload.blocksAfter = await listBlocksForDate(proposal.date);
+    // 「最近一次」靠 createdAt 排序；同一毫秒內連續套用時往後推 1ms，確保撤銷永遠撤到最後那一次
+    const prev = await db.planRevisions.where('date').equals(proposal.date).sortBy('createdAt');
+    const lastAt = prev.length ? prev[prev.length - 1].createdAt : undefined;
+    const createdAt = lastAt && lastAt >= now ? new Date(new Date(lastAt).getTime() + 1).toISOString() : now;
     const revision: PlanRevision = {
       id: revisionId,
       date: proposal.date,
-      createdAt: now,
+      createdAt,
       trigger: proposal.trigger,
       applied: true,
       appliedAt: now,
