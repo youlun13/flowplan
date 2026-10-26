@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react';
 import { PageHeader } from '@/components/AppShell';
-import { Button, Confirm, ErrorText, Field, Input, Segmented, Select, Sheet, Textarea, Toggle } from '@/components/ui';
+import { Button, Confirm, ErrorText, Field, Input, NumberInput, Segmented, Select, Sheet, Textarea, Toggle } from '@/components/ui';
 import { clearAllData, countAll, updateSettings } from '@/db/repo';
 import { exportBackupJson, importBackup, parseBackup, type ImportMode } from '@/db/backup';
 import type { Settings } from '@/db/schema';
@@ -317,13 +317,13 @@ export function SettingsPage() {
             <Input type="time" value={draft.sleepEnd} onChange={(e) => set('sleepEnd', e.target.value)} />
           </Field>
           <Field label="行程前後緩衝（分鐘）">
-            <Input type="number" inputMode="numeric" min={0} max={120} step={5} value={draft.bufferMinutes} onChange={(e) => set('bufferMinutes', Number(e.target.value))} />
+            <NumberInput min={0} max={120} step={5} value={draft.bufferMinutes} onChange={(n) => set('bufferMinutes', n)} />
           </Field>
           <Field label="一次專注（分鐘）">
-            <Input type="number" inputMode="numeric" min={10} max={240} step={5} value={draft.focusMinutes} onChange={(e) => set('focusMinutes', Number(e.target.value))} />
+            <NumberInput min={10} max={240} step={5} value={draft.focusMinutes} onChange={(n) => set('focusMinutes', n)} />
           </Field>
           <Field label="區塊之間休息（分鐘）">
-            <Input type="number" inputMode="numeric" min={0} max={60} step={5} value={draft.breakMinutes} onChange={(e) => set('breakMinutes', Number(e.target.value))} />
+            <NumberInput min={0} max={60} step={5} value={draft.breakMinutes} onChange={(n) => set('breakMinutes', n)} />
           </Field>
         </div>
         <div className="mt-3 flex items-center justify-between">
@@ -446,10 +446,10 @@ export function SettingsPage() {
         )}
         <div className="mt-3 grid grid-cols-2 gap-3">
           <Field label="每日請求上限">
-            <Input type="number" inputMode="numeric" min={0} max={1000} value={draft.ai.dailyLimit} onChange={(e) => setAi({ dailyLimit: Number(e.target.value) })} />
+            <NumberInput min={0} max={1000} value={draft.ai.dailyLimit} onChange={(n) => setAi({ dailyLimit: n })} />
           </Field>
           <Field label="單次最大輸出 token">
-            <Input type="number" inputMode="numeric" min={128} max={8192} step={128} value={draft.ai.maxOutputTokens} onChange={(e) => setAi({ maxOutputTokens: Number(e.target.value) })} />
+            <NumberInput min={128} max={8192} step={128} value={draft.ai.maxOutputTokens} onChange={(n) => setAi({ maxOutputTokens: n })} />
           </Field>
         </div>
         <div className="mt-3 flex flex-wrap items-center gap-2">

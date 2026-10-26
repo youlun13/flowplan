@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
-import { Button, Confirm, ErrorText, Field, Input, Segmented, Sheet, Textarea, Toggle, cx } from './ui';
+import { Button, Confirm, ErrorText, Field, Input, NumberInput, Segmented, Sheet, Textarea, Toggle, cx } from './ui';
 import { ENERGY_LABEL, PRIORITY_LABEL, type Energy, type Priority, type Task } from '@/db/schema';
 import { createTask, deleteTask, updateTask, ValidationError } from '@/db/repo';
 import { useTasks } from '@/hooks/useData';
@@ -204,7 +204,7 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
             />
           </Field>
           <Field label="預估（分鐘）">
-            <Input type="number" inputMode="numeric" min={5} max={1440} step={5} value={draft.estimatedMinutes} onChange={(e) => set('estimatedMinutes', Number(e.target.value))} />
+            <NumberInput min={5} max={1440} step={5} value={draft.estimatedMinutes} onChange={(n) => set('estimatedMinutes', n)} data-testid="estimated-minutes" />
           </Field>
         </div>
         {calHint && <p className="-mt-2 text-xs text-muted">{calHint}</p>}

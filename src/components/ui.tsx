@@ -1,4 +1,4 @@
-import { useEffect, type ReactNode } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { X } from 'lucide-react';
 
 export function cx(...parts: Array<string | false | null | undefined>): string {
@@ -66,6 +66,55 @@ export const inputClass =
 
 export function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
   return <input {...props} className={cx(inputClass, props.className)} />;
+}
+
+/**
+ * 數字欄位：輸入中以文字保存，所以可以清空、可以刪掉開頭的 0；
+ * 只在內容是合法數字時才回報給外面；失焦時若不合法就還原成目前的值。
+ * （直接用 value={number} 的話，清空會變成 0，再打 120 就成了「0120」且刪不掉。）
+ */
+export function NumberInput({ value, onChange, min, max, ...rest }: Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange' | 'type'> & { value: number; onChange: (n: number) => void; min?: number; max?: number }) {
+  const [text, setText] = useState(String(value));
+  const [focused, setFocused] = useState(false);
+  useEffect(() => {
+    if (!focused) setText(String(value));
+  }, [value, focused]);
+  const parse = (t: string): number | null => {
+    if (!/^\d+$/.test(t.trim())) return null;
+    const n = Number(t);
+    if (!Number.isFinite(n)) return null;
+    if (min !== undefined && n < min) return null;
+    if (max !== undefined && n > max) return null;
+    return n;
+  };
+  return (
+    <input
+      {...rest}
+      type="number"
+      inputMode="numeric"
+      min={min}
+      max={max}
+      value={text}
+      onFocus={(e) => {
+        setFocused(true);
+        rest.onFocus?.(e);
+      }}
+      onBlur={(e) => {
+        setFocused(false);
+        const n = parse(text);
+        if (n === null) setText(String(value));
+        else if (String(n) !== text) setText(String(n)); // 去掉開頭的 0
+        rest.onBlur?.(e);
+      }}
+      onChange={(e) => {
+        const t = e.target.value;
+        setText(t);
+        const n = parse(t);
+        if (n !== null) onChange(n);
+      }}
+      className={cx(inputClass, rest.className)}
+    />
+  );
 }
 
 export function Textarea(props: React.TextareaHTMLAttributes<HTMLTextAreaElement>) {
