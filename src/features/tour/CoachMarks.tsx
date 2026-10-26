@@ -18,6 +18,7 @@ interface Step {
 export const TOUR_STEPS: Step[] = [
   { route: '/', target: 'next', title: '現在該做什麼', body: '打開 App 第一眼看這裡。它會從你今天的任務、行程、剩餘時間和精力，挑出現在最該做的一件。按「開始」就計時，做完打勾。' },
   { route: '/', target: 'energy', title: '先說你現在的精力', body: '高 / 中 / 低。精力低的時候，它會把需要高專注的事往後擺，先給你輕鬆的。' },
+  { route: '/', target: 'quick-plan', title: '把今天要做的事打出來', body: '一行一件，順手寫時間（讀英文 60、寫報告 1.5h）。它會幫你加進今天，立刻排出建議；要不要套用你決定。' },
   { route: '/', target: 'incident', title: '狀況發生時按這裡', body: '睡過頭、臨時有事、很累、做超時……用一句話描述或選一種。它給你兩個選擇：「拚了」直接做最重要的，或「先喘口氣」休息一下再做輕鬆的。' },
   { route: '/', target: 'add-task', title: '從這裡加今天要做的事', body: '名稱、預估要多久就好；有截止時間或優先級再填。預估不準沒關係，做幾次之後會用實際時間幫你校正。' },
   { route: '/calendar', target: 'add-event', title: '固定行程放日曆', body: '上課、開會、社團這種動不了的時間放這裡，可以每週重複。排程時會自動避開，前後還留緩衝。' },

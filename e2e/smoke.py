@@ -43,7 +43,7 @@ with sync_playwright() as p:
     check("第一次進入：介面上出現聚光燈導覽（框住下一步卡片 + 說明框），不是示範資料", page.locator("[data-testid='tour-callout'] >> text=現在該做什麼").count() == 1)
     page.screenshot(path=f"{SHOTS}/00b-tour.png")
     spotlights = 0
-    for _ in range(6):
+    for _ in range(7):
         page.click("[data-testid='tour-next']")
         page.wait_for_timeout(400)
         spotlights += page.locator("[data-testid='tour-spotlight']").count()
@@ -73,6 +73,27 @@ with sync_playwright() as p:
     page.wait_for_selector("text=下一步（")
     page.screenshot(path=f"{SHOTS}/01-dashboard.png", full_page=True)
     check("加了任務後出現下一步", page.locator("text=下一步（").count() == 1)
+
+    # ---- 打字排今天：一次打多件 → 自動排 → 可以只加任務不套用 ----
+    page.click("[data-testid='open-quick-plan']")
+    page.wait_for_selector("[data-testid='quick-text']")
+    page.fill("[data-testid='quick-text']", "E2E 快速A 20\nE2E 快速B 15分 !\n")
+    check("打字排今天：即時解析出兩件（含優先級高）", page.locator("div[role='dialog'] >> text=共 2 件").count() == 1 and page.locator("div[role='dialog'] >> text=高").count() >= 1)
+    page.click("[data-testid='quick-plan']")
+    page.wait_for_selector("text=現在要做什麼")
+    check("打字排今天：加入後立刻給方案", page.locator("[data-testid='option-A']").count() == 1)
+    page.click("[data-testid='keep-plan']")
+    page.wait_for_selector("[data-testid='quick-text']", state="detached")
+    page.click("a[href='#/tasks']:visible")
+    page.wait_for_selector("text=E2E 快速A")
+    page.wait_for_selector("text=E2E 快速B", timeout=8000)
+    page.wait_for_timeout(500)
+    _a, _b, _s = page.locator("text=E2E 快速A").count(), page.locator("text=E2E 快速B").count(), page.locator("h2:has-text('今日排程')").count()
+    if _a == 0 or _b == 0:
+        print("DEBUG url:", page.url); print("DEBUG main:", page.locator("main").inner_text()[:500].replace("\n", " | "))
+    check(f"打字排今天：不套用也會留下任務 (A={_a} B={_b} 排程={_s})", _a >= 1 and _b >= 1 and _s == 0)
+    page.click("a[href='#/']:visible")
+    page.wait_for_selector("text=下一步（")
 
     # ---- 驗收 1：新增明天的 TODO，重新整理後仍存在 ----
     page.click("a[href='#/tasks']:visible")

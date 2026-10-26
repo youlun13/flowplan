@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
-import { AlertTriangle, Play, Square, CircleCheckBig, Plus, Undo2, SkipForward, CalendarClock } from 'lucide-react';
+import { AlertTriangle, Play, Square, CircleCheckBig, Plus, Undo2, SkipForward, CalendarClock, ListPlus } from 'lucide-react';
 import { useLiveQuery } from 'dexie-react-hooks';
 import { PageHeader } from '@/components/AppShell';
 import { Button, Chip, Empty, Section, Segmented, cx } from '@/components/ui';
@@ -9,6 +9,7 @@ import { TaskRow } from '@/components/TaskRow';
 import { EventForm } from '@/components/EventForm';
 import { DayTimeline } from '@/components/DayTimeline';
 import { IncidentSheet } from './IncidentSheet';
+import { QuickPlanSheet } from './QuickPlanSheet';
 import { ENERGY_LABEL, type Energy, type Task, type WorkBlock } from '@/db/schema';
 import { cancelTask, deferTask, setDailyState, setTaskDone, startLog, stopLog } from '@/db/repo';
 import { latestRevisionForDate, setBlockStatus, undoRevision } from '@/db/plan';
@@ -27,7 +28,7 @@ import { addLocalDays, diffLocalDays, formatDuration, formatLocalDateZh, formatT
 
 export function DashboardPage() {
   const nowMs = useNow(30_000);
-  const { today, tz, tasks, todayOcc, blocks, running, daily, settings, buildProposal } = usePlanner(nowMs);
+  const { today, tz, tasks, todayOcc, blocks, running, daily, settings, buildProposal, buildProposalWith } = usePlanner(nowMs);
   const events = useEvents();
   const logs = useLogsForDate(today);
   const latestRevision = useLiveQuery(() => latestRevisionForDate(today), [today, blocks]);
@@ -37,6 +38,7 @@ export function DashboardPage() {
   const [creating, setCreating] = useState(false);
   const [occEditing, setOccEditing] = useState<Occurrence | null>(null);
   const [incident, setIncident] = useState<null | { replan: boolean }>(null);
+  const [quickPlan, setQuickPlan] = useState(false);
 
   const todayTasks = useMemo(() => sortTasks(tasksForDate(tasks, today, tz), 'priority'), [tasks, today, tz]);
   const remaining = todayTasks.filter((t) => t.status !== 'done');
@@ -192,9 +194,14 @@ export function DashboardPage() {
         )}
       </section>
 
-      <Button full className="mt-3" onClick={() => setIncident({ replan: false })} data-tour="incident">
-        <AlertTriangle size={18} className="text-warn" /> 我遇到狀況了
-      </Button>
+      <div className="mt-3 grid grid-cols-2 gap-2">
+        <Button className="min-h-12" onClick={() => setQuickPlan(true)} data-tour="quick-plan" data-testid="open-quick-plan">
+          <ListPlus size={18} className="text-accent" /> 打字排今天
+        </Button>
+        <Button className="min-h-12" onClick={() => setIncident({ replan: false })} data-tour="incident">
+          <AlertTriangle size={18} className="text-warn" /> 我遇到狀況了
+        </Button>
+      </div>
 
       {/* 最近套用 / 撤銷 */}
       {latestRevision && (
@@ -328,6 +335,7 @@ export function DashboardPage() {
         buildProposal={buildProposal}
         startWithReplan={incident?.replan}
       />
+      <QuickPlanSheet open={quickPlan} onClose={() => setQuickPlan(false)} today={today} tz={tz} settings={settings} buildProposalWith={buildProposalWith} />
     </div>
   );
 }

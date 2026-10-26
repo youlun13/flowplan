@@ -13,7 +13,7 @@ import { addLocalDays, formatDuration, formatTime } from '@/lib/time';
  * 每張只有：做什麼、幾點到幾點、一句為什麼、「就這個」、「細節」。
  * 「細節」是明顯的按鈕，展開後只有兩樣：套用後今日安排、缺點。字都用正常大小。
  */
-export function ProposalView({ options, tz, onApply, onKeep, applying }: { options: PlanOption[]; tz: string; onApply: (p: PlanProposal) => void; onKeep: () => void; applying?: boolean }) {
+export function ProposalView({ options, tz, onApply, onKeep, applying, keepLabel = '都不要，保留原計畫' }: { options: PlanOption[]; tz: string; onApply: (p: PlanProposal) => void; onKeep: () => void; applying?: boolean; keepLabel?: string }) {
   const a = options[0].proposal;
   const urgent = a.warnings.filter((w) => w.includes('截止') || w.includes('時間不夠'));
 
@@ -35,8 +35,8 @@ export function ProposalView({ options, tz, onApply, onKeep, applying }: { optio
         <OptionCard key={o.key} option={o} tz={tz} onPick={() => onApply(o.proposal)} applying={applying} recommended={o.key === 'A'} />
       ))}
 
-      <button type="button" className="w-full py-2 text-[15px] text-muted" onClick={onKeep}>
-        都不要，保留原計畫
+      <button type="button" className="w-full py-2 text-[15px] text-muted" onClick={onKeep} data-testid="keep-plan">
+        {keepLabel}
       </button>
     </div>
   );

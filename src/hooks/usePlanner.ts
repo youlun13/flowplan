@@ -1,7 +1,7 @@
 import { useLiveQuery } from 'dexie-react-hooks';
 import { useCallback, useMemo } from 'react';
 import { db } from '@/db/db';
-import type { WorkBlock } from '@/db/schema';
+import type { Task, WorkBlock } from '@/db/schema';
 import { buildPlan, type Incident, type PlanProposal, type PlannerInput } from '@/engine/planner';
 import { computeAvailability } from '@/engine/availability';
 import { calibration } from '@/engine/stats';
@@ -79,5 +79,12 @@ export function usePlanner(nowMs: number) {
     [baseInput],
   );
 
-  return { today, tz, tasks, todayOcc, blocks, running, daily, settings, buildProposal };
+  /** 用剛寫進資料庫、live query 還沒更新的任務清單來算（快速排今天用） */
+  const buildProposalWith = useCallback(
+    (tasksOverride: Task[], incident?: Incident, args?: { pinFirstTaskId?: string; restFirstMinutes?: number }): PlanProposal =>
+      buildPlan({ ...baseInput, tasks: tasksOverride, calibration: settings.useCalibration ? calibration(tasksOverride) : undefined, nowMs: Date.now(), incident, ...(args ?? {}) }),
+    [baseInput, settings.useCalibration],
+  );
+
+  return { today, tz, tasks, todayOcc, blocks, running, daily, settings, buildProposal, buildProposalWith };
 }
