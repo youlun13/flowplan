@@ -165,17 +165,28 @@ export async function setTaskDone(id: string, done: boolean): Promise<Task> {
   if (!current) throw new ValidationError('找不到這個任務');
   if (done) {
     const minutes = await loggedMinutesForTask(id);
+    const at = nowIso();
     const updated = await updateTask(id, {
       status: 'done',
-      completedAt: nowIso(),
+      completedAt: at,
       actualMinutes: minutes > 0 ? Math.round(minutes) : current.actualMinutes,
     });
-    // 還沒做的排程區塊一併結束，之後重排不會再安排它
+    // 還沒做的排程區塊一併結束（endedAt 與 completedAt 同一刻，取消完成時才認得出來還原）
     const blocks = await db.workBlocks.where('taskId').equals(id).toArray();
     for (const b of blocks) {
-      if (b.status === 'planned' || b.status === 'active') await db.workBlocks.put({ ...b, status: 'done', endedAt: nowIso(), updatedAt: nowIso() });
+      if (b.status === 'planned' || b.status === 'active') await db.workBlocks.put({ ...b, status: 'done', endedAt: at, updatedAt: at });
     }
     return updated;
+  }
+  // 取消完成：把「按完成那一刻」被一起結束的區塊還原成待做，排程才不會留著一個假的「完成」
+  if (current.status === 'done' && current.completedAt) {
+    const doneAt = new Date(current.completedAt).getTime();
+    const blocks = await db.workBlocks.where('taskId').equals(id).toArray();
+    for (const b of blocks) {
+      if (b.status === 'done' && b.endedAt && Math.abs(new Date(b.endedAt).getTime() - doneAt) <= 2000) {
+        await db.workBlocks.put({ ...b, status: 'planned', endedAt: undefined, updatedAt: nowIso() });
+      }
+    }
   }
   return updateTask(id, { status: 'todo', completedAt: undefined });
 }

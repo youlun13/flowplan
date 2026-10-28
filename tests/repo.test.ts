@@ -56,6 +56,25 @@ describe('任務持久化', () => {
     expect(undone.completedAt).toBeUndefined();
   });
 
+  it('不小心按到完成 → 取消完成會把一起被結束的排程區塊還原（早就做完的區塊不動）', async () => {
+    const t = await createTask({ title: 'x' });
+    const now = new Date().toISOString();
+    const base = { taskId: t.id, date: '2026-10-28', startAt: now, endAt: now, isMinimum: false, createdAt: now, updatedAt: now } as const;
+    await db.workBlocks.bulkPut([
+      { ...base, id: 'b-planned', status: 'planned' },
+      { ...base, id: 'b-active', status: 'active' },
+      { ...base, id: 'b-old-done', status: 'done', endedAt: '2026-10-28T01:00:00.000Z' },
+    ]);
+    await setTaskDone(t.id, true);
+    expect((await db.workBlocks.get('b-planned'))!.status).toBe('done');
+    expect((await db.workBlocks.get('b-active'))!.status).toBe('done');
+    await setTaskDone(t.id, false);
+    expect((await db.workBlocks.get('b-planned'))!.status).toBe('planned');
+    expect((await db.workBlocks.get('b-active'))!.status).toBe('planned');
+    expect((await db.workBlocks.get('b-planned'))!.endedAt).toBeUndefined();
+    expect((await db.workBlocks.get('b-old-done'))!.status).toBe('done');
+  });
+
   it('空白標題、非法工時會被拒絕（規格 13 空白 TODO）', async () => {
     await expect(createTask({ title: '   ' })).rejects.toThrow('任務名稱不能空白');
     await expect(createTask({ title: 'ok', estimatedMinutes: 2 })).rejects.toThrow();

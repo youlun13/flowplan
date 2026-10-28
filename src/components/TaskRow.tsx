@@ -28,6 +28,15 @@ export function TaskRow({
   async function toggle() {
     try {
       await setTaskDone(task.id, !done);
+      if (!done) {
+        toast.show(`完成：${task.title}`, 'info', {
+          label: '復原',
+          onClick: async () => {
+            await setTaskDone(task.id, false);
+            toast.show(`已復原：${task.title}`);
+          },
+        });
+      }
     } catch (e) {
       toast.show(e instanceof Error ? e.message : '更新失敗', 'danger');
     }

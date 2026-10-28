@@ -8,6 +8,7 @@ import { LOG_CATEGORY_LABEL, type ActivityLog, type LogCategory } from '@/db/sch
 import { startLog, stopLog } from '@/db/repo';
 import { useLogsForDate, useOccurrences, useRunningLog, useTasks } from '@/hooks/useData';
 import { useNow } from '@/hooks/useNow';
+import { ElapsedTimer } from '@/components/ElapsedTimer';
 import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { isOpen } from '@/lib/select';
@@ -123,14 +124,11 @@ export function LogPage() {
 
       {/* 進行中 / 快速開始 */}
       {running ? (
-        <div className="mt-3 flex items-center gap-3 rounded-xl bg-accent px-4 py-3 text-accent-ink">
-          <div className="min-w-0 flex-1">
-            <div className="text-xs opacity-80">
-              進行中 · {formatTime(running.startAt, tz)} 起，已 {formatDuration((nowMs - new Date(running.startAt).getTime()) / 60_000)}
-            </div>
-            <div className="truncate text-[16px] font-semibold">{running.title}</div>
-          </div>
-          <Button className="bg-white/95 text-accent" onClick={stop}>
+        <div className="mt-3 rounded-xl bg-accent px-4 py-4 text-accent-ink">
+          <div className="text-[14px] opacity-80">進行中 · {formatTime(running.startAt, tz)} 起</div>
+          <div className="truncate text-[17px] font-semibold">{running.title}</div>
+          <ElapsedTimer startAt={running.startAt} className="my-2 block text-center text-[52px] font-semibold leading-none tracking-tight" />
+          <Button full className="min-h-12 bg-white/95 text-[16px] text-accent" onClick={stop}>
             <Square size={16} /> 結束
           </Button>
         </div>

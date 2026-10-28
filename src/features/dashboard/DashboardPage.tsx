@@ -8,6 +8,7 @@ import { TaskForm } from '@/components/TaskForm';
 import { TaskRow } from '@/components/TaskRow';
 import { EventForm } from '@/components/EventForm';
 import { DayTimeline } from '@/components/DayTimeline';
+import { ElapsedTimer } from '@/components/ElapsedTimer';
 import { IncidentSheet } from './IncidentSheet';
 import { PlanTodaySheet } from './PlanTodaySheet';
 import { ENERGY_LABEL, type Energy, type Task, type WorkBlock } from '@/db/schema';
@@ -87,7 +88,13 @@ export function DashboardPage() {
     try {
       if (running?.taskId === task.id) await stopLog(running.id, undefined, tz);
       await setTaskDone(task.id, true);
-      toast.show(`完成：${task.title}`);
+      toast.show(`完成：${task.title}`, 'info', {
+        label: '復原',
+        onClick: async () => {
+          await setTaskDone(task.id, false);
+          toast.show(`已復原：${task.title}`);
+        },
+      });
     } catch (e) {
       toast.show(e instanceof Error ? e.message : '無法完成', 'danger');
     }
@@ -127,8 +134,9 @@ export function DashboardPage() {
       {running && (
         <div className="mt-4 flex items-center gap-3 rounded-xl border border-accent/40 bg-accent-soft px-4 py-3">
           <div className="min-w-0 flex-1">
-            <div className="text-xs text-accent">進行中 · 從 {formatTime(running.startAt, tz)} 開始，已 {formatDuration((nowMs - new Date(running.startAt).getTime()) / 60_000)}</div>
+            <div className="text-xs text-accent">進行中 · 從 {formatTime(running.startAt, tz)} 開始</div>
             <div className="truncate text-[15px] font-medium">{running.title}</div>
+            <ElapsedTimer startAt={running.startAt} className="block text-[26px] font-semibold leading-tight text-accent" />
           </div>
           {runningTask && runningTask.status !== 'done' && (
             <Button variant="primary" onClick={() => finish(runningTask)} aria-label="完成任務">
