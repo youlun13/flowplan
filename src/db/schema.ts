@@ -22,6 +22,17 @@ export type Energy = z.infer<typeof EnergySchema>;
 export type EventKind = z.infer<typeof EventKindSchema>;
 export type LogCategory = z.infer<typeof LogCategorySchema>;
 
+/** 任務的重複規則（存在「系列」那筆上；每一天實際出現的是獨立的任務） */
+export const TaskRepeatSchema = z.object({
+  freq: z.enum(['daily', 'weekly']),
+  /** 每週：0 = 週日 … 6 = 週六；每天可省略 */
+  byWeekday: z.array(z.number().int().min(0).max(6)).optional(),
+  until: LocalDateSchema.optional(),
+  /** 被「刪這一次」的日期 */
+  exceptions: z.array(LocalDateSchema).default([]),
+});
+export type TaskRepeat = z.infer<typeof TaskRepeatSchema>;
+
 export const TaskSchema = z.object({
   id: Id,
   title: z.string().trim().min(1, '任務名稱不能空白').max(200),
@@ -41,6 +52,15 @@ export const TaskSchema = z.object({
   /** 規則 8（反飢餓）需要：被延後的次數與最近一次延後時間 */
   deferCount: z.number().int().min(0),
   lastDeferredAt: IsoDateTime.optional(),
+  /** 有 repeat 的是「系列」範本：不出現在清單、不被排程；plannedDate 是從哪天開始 */
+  repeat: TaskRepeatSchema.optional(),
+  /** 由哪個系列生成、代表哪一天 */
+  seriesId: Id.optional(),
+  occurrenceDate: LocalDateSchema.optional(),
+  /** 這一次被單獨改過：改整個系列時不覆蓋 */
+  detached: z.boolean().optional(),
+  /** 重複任務那天沒做、日子過了：自動收起來（status 會是 cancelled） */
+  missed: z.boolean().optional(),
   isDemo: z.boolean().optional(),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,

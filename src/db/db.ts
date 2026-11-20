@@ -34,6 +34,9 @@ export class FlowPlanDB extends Dexie {
       syncQueue: 'key, table, queuedAt',
       syncMeta: 'id',
     });
+    this.version(5).stores({
+      tasks: 'id, status, priority, plannedDate, dueAt, updatedAt, seriesId',
+    });
   }
 }
 

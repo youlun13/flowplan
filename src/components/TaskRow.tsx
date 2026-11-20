@@ -1,6 +1,7 @@
 import { Check } from 'lucide-react';
 import { Chip, cx } from './ui';
-import { PRIORITY_LABEL, type Task } from '@/db/schema';
+import { PRIORITY_LABEL, type Task, type TaskRepeat } from '@/db/schema';
+import { repeatLabel } from '@/engine/taskRepeat';
 import { setTaskDone } from '@/db/repo';
 import { useToast } from '@/hooks/useToast';
 import { dueRisk } from '@/lib/select';
@@ -13,6 +14,7 @@ export function TaskRow({
   onOpen,
   showDate,
   compact,
+  repeatOf,
 }: {
   task: Task;
   tz: string;
@@ -20,6 +22,8 @@ export function TaskRow({
   onOpen: (task: Task) => void;
   showDate?: boolean;
   compact?: boolean;
+  /** 這一筆是重複任務的某一天：顯示規則小標籤 */
+  repeatOf?: TaskRepeat;
 }) {
   const toast = useToast();
   const done = task.status === 'done';
@@ -43,7 +47,7 @@ export function TaskRow({
   }
 
   return (
-    <div className={cx('flex items-start gap-3 py-2.5', !compact && 'border-b border-line last:border-b-0')}>
+    <div className={cx('flex items-start gap-3 py-2.5', !compact && 'border-b border-line last:border-b-0')} data-testid="task-row" data-title={task.title}>
       <button
         type="button"
         role="checkbox"
@@ -63,6 +67,8 @@ export function TaskRow({
           <Chip tone={task.priority === 'P1' ? 'danger' : task.priority === 'P2' ? 'warn' : 'neutral'}>{PRIORITY_LABEL[task.priority]}</Chip>
           <Chip>{formatDuration(task.estimatedMinutes)}</Chip>
           {task.status === 'in_progress' && <Chip tone="accent">進行中</Chip>}
+          {task.repeat && <Chip tone="accent">{repeatLabel(task.repeat, { withUntil: true })}</Chip>}
+          {task.seriesId && repeatOf && <Chip>{repeatLabel(repeatOf)}</Chip>}
           {task.dueAt && (
             <Chip tone={risk === 'overdue' ? 'danger' : risk === 'today' || risk === 'soon' ? 'warn' : 'neutral'}>
               {risk === 'overdue' ? '逾期 ' : '截止 '}

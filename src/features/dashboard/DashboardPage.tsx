@@ -17,7 +17,7 @@ import { latestRevisionForDate, setBlockStatus, undoRevision } from '@/db/plan';
 import { computeAvailability } from '@/engine/availability';
 import { pickNextStep } from '@/engine/nextStep';
 import type { Occurrence } from '@/engine/recurrence';
-import { useEvents, useLogsForDate } from '@/hooks/useData';
+import { useEvents, useLogsForDate, useTaskSeries } from '@/hooks/useData';
 import { useNow } from '@/hooks/useNow';
 import { useSession } from '@/hooks/useSession';
 import { syncConfigured } from '@/sync/engine';
@@ -30,6 +30,8 @@ import { addLocalDays, diffLocalDays, formatDuration, formatLocalDateZh, formatT
 export function DashboardPage() {
   const nowMs = useNow(30_000);
   const { today, tz, tasks, todayOcc, blocks, running, daily, settings, buildProposal } = usePlanner(nowMs);
+  const seriesList = useTaskSeries();
+  const repeatById = useMemo(() => new Map(seriesList.map((s) => [s.id, s.repeat!])), [seriesList]);
   const events = useEvents();
   const logs = useLogsForDate(today);
   const latestRevision = useLiveQuery(() => latestRevisionForDate(today), [today, blocks]);
@@ -281,7 +283,7 @@ export function DashboardPage() {
         ) : (
           <div className="rounded-xl border border-line bg-surface px-3">
             {remaining.map((t) => (
-              <TaskRow key={t.id} task={t} tz={tz} nowMs={nowMs} onOpen={setEditing} />
+              <TaskRow key={t.id} task={t} tz={tz} nowMs={nowMs} onOpen={setEditing} repeatOf={t.seriesId ? repeatById.get(t.seriesId) : undefined} />
             ))}
           </div>
         )}

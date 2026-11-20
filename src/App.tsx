@@ -3,7 +3,10 @@ import { HashRouter, Navigate, Route, Routes, useLocation } from 'react-router-d
 import { useLiveQuery } from 'dexie-react-hooks';
 import { AppShell } from './components/AppShell';
 import { ToastProvider } from './hooks/useToast';
-import { getSettings, hasNoOwnData, purgeDemoData } from './db/repo';
+import { ensureRecurringInstances, getSettings, hasNoOwnData, purgeDemoData } from './db/repo';
+import { useTaskSeries } from './hooks/useData';
+import { useNow } from './hooks/useNow';
+import { toLocalDate } from './lib/time';
 import { WelcomePage } from './features/welcome/WelcomePage';
 import { CoachMarks } from './features/tour/CoachMarks';
 import { DashboardPage } from './features/dashboard/DashboardPage';
@@ -34,6 +37,22 @@ function SyncRunner() {
     return stop;
     // session 變動（登入 / 登出）時重新評估
   }, [enabled, session?.uid]);
+  return null;
+}
+
+/**
+ * 重複任務：開 App、跨日、系列有變動（含從別台裝置同步進來）時，補生成接下來 14 天的實例、收掉錯過的。
+ * idempotent，多跑幾次沒關係。
+ */
+function RecurringRunner() {
+  const settings = useSettings();
+  const nowMs = useNow(60_000);
+  const today = toLocalDate(nowMs, settings.timeZone);
+  const series = useTaskSeries();
+  const signature = series.map((s) => `${s.id}:${s.updatedAt}`).join('|');
+  useEffect(() => {
+    void ensureRecurringInstances(today).catch(() => undefined);
+  }, [today, signature]);
   return null;
 }
 
@@ -110,6 +129,7 @@ export function App() {
   return (
     <ToastProvider>
       <SyncRunner />
+      <RecurringRunner />
       {reload && (
         <div className="safe-top fixed inset-x-0 top-0 z-[80] flex justify-center px-4 pt-2">
           <div className="flex items-center gap-3 rounded-xl border border-line bg-surface px-4 py-2 text-sm shadow-lg">

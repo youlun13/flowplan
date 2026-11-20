@@ -9,8 +9,14 @@ const EMPTY_TASKS: Task[] = [];
 const EMPTY_EVENTS: CalendarEvent[] = [];
 const EMPTY_LOGS: ActivityLog[] = [];
 
+/** 一般任務（含重複任務每一天的實例）；不含「系列」範本 */
 export function useTasks(): Task[] {
-  return useLiveQuery(() => db.tasks.toArray(), []) ?? EMPTY_TASKS;
+  return useLiveQuery(() => db.tasks.filter((t) => !t.repeat).toArray(), []) ?? EMPTY_TASKS;
+}
+
+/** 重複任務的系列範本 */
+export function useTaskSeries(): Task[] {
+  return useLiveQuery(() => db.tasks.filter((t) => Boolean(t.repeat)).toArray(), []) ?? EMPTY_TASKS;
 }
 
 export function useEvents(): CalendarEvent[] {

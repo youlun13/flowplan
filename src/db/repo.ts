@@ -19,9 +19,12 @@ import {
   type Priority,
   type Settings,
   type Task,
+  TaskRepeatSchema,
+  type TaskRepeat,
 } from './schema';
 import { newId } from '@/lib/id';
-import { nowIso, toLocalDate, type LocalDate } from '@/lib/time';
+import { addLocalDays, compareLocalDate, nowIso, toLocalDate, type LocalDate } from '@/lib/time';
+import { instanceId, occurrenceDates, REPEAT_HORIZON_DAYS, SERIES_COPY_FIELDS, type SeriesCopyField } from '@/engine/taskRepeat';
 import { wouldCreateCycle } from '@/engine/dependencies';
 
 export class ValidationError extends Error {
@@ -82,6 +85,8 @@ export interface TaskInput {
   splittable?: boolean;
   dependencies?: string[];
   isDemo?: boolean;
+  /** 有給就建立「系列」：plannedDate 當作從哪天開始（沒給就是今天） */
+  repeat?: TaskRepeat;
 }
 
 function clean<T extends object>(obj: T): T {
@@ -124,6 +129,152 @@ export async function createTask(input: TaskInput): Promise<Task> {
   }
   await db.tasks.add(parsed.data);
   return parsed.data;
+}
+
+/* ------------------------------ 重複任務（系列） ------------------------------ */
+
+function validateRepeat(repeat: TaskRepeat): TaskRepeat {
+  const parsed = TaskRepeatSchema.safeParse(repeat);
+  if (!parsed.success) throw new ValidationError(firstIssue(parsed.error));
+  if (parsed.data.freq === 'weekly' && !(parsed.data.byWeekday && parsed.data.byWeekday.length)) throw new ValidationError('每週重複至少要選一天');
+  return { ...parsed.data, byWeekday: parsed.data.byWeekday ? [...new Set(parsed.data.byWeekday)].sort((a, b) => a - b) : undefined };
+}
+
+/**
+ * 建立一個重複任務的系列，並立刻生成今天起 14 天內的實例。
+ * 系列本身存在 tasks 表（有 repeat），不會出現在清單、不會被排程。
+ */
+export async function createTaskSeries(input: TaskInput & { repeat: TaskRepeat }, today: LocalDate): Promise<Task> {
+  const repeat = validateRepeat(input.repeat);
+  const start = input.plannedDate && compareLocalDate(input.plannedDate, today) > 0 ? input.plannedDate : today;
+  if (repeat.until && compareLocalDate(repeat.until, start) < 0) throw new ValidationError('「重複到」不能早於開始日');
+  const series = await createTask({ ...input, plannedDate: start, dueAt: undefined, dependencies: [], repeat: undefined });
+  const saved = await updateTask(series.id, { repeat });
+  await ensureRecurringInstances(today);
+  return saved;
+}
+
+/**
+ * 補生成：每個系列在 [today, today+horizon) 內該出現卻還沒有的日期，各建一筆普通任務。
+ * 已過的日子不補（錯過就錯過）；過去還沒做的實例標成 missed 收起來。idempotent，可以每次開 App 都呼叫。
+ */
+export async function ensureRecurringInstances(today: LocalDate, horizonDays = REPEAT_HORIZON_DAYS): Promise<{ created: number; missed: number }> {
+  const to = addLocalDays(today, horizonDays - 1);
+  let created = 0;
+  let missed = 0;
+  await db.transaction('rw', db.tasks, async () => {
+    const all = await db.tasks.toArray();
+    const seriesList = all.filter((t) => t.repeat && t.status !== 'cancelled');
+    const byId = new Map(all.map((t) => [t.id, t]));
+    const now = nowIso();
+    for (const s of seriesList) {
+      for (const date of occurrenceDates(s, today, to)) {
+        const id = instanceId(s.id, date);
+        if (byId.has(id)) continue;
+        const inst = instanceFromSeries(s, date, now);
+        await db.tasks.add(inst);
+        byId.set(id, inst);
+        created++;
+      }
+    }
+    // 錯過的：重複任務實例、日子已過、還沒開始做 → 收起來，不進逾期
+    for (const t of all) {
+      if (!t.seriesId || !t.occurrenceDate) continue;
+      if (t.status !== 'todo') continue;
+      if (t.plannedDate && compareLocalDate(t.plannedDate, today) >= 0) continue;
+      if (t.actualMinutes && t.actualMinutes > 0) continue;
+      await db.tasks.put({ ...t, status: 'cancelled', missed: true, updatedAt: now });
+      missed++;
+    }
+  });
+  return { created, missed };
+}
+
+function instanceFromSeries(series: Task, date: LocalDate, now: string): Task {
+  const base: Record<string, unknown> = {
+    id: instanceId(series.id, date),
+    status: 'todo',
+    plannedDate: date,
+    dependencies: [],
+    deferCount: 0,
+    seriesId: series.id,
+    occurrenceDate: date,
+    createdAt: now,
+    updatedAt: now,
+  };
+  for (const f of SERIES_COPY_FIELDS) base[f] = series[f];
+  const parsed = TaskSchema.safeParse(clean(base));
+  if (!parsed.success) throw new ValidationError(firstIssue(parsed.error));
+  return parsed.data;
+}
+
+/**
+ * 改整個系列：更新範本與規則，然後把今天起還沒做、沒被單獨改過的實例同步成新內容；
+ * 規則改了而不再出現的日子刪掉、新出現的日子補上。
+ */
+export async function updateTaskSeries(
+  seriesId: string,
+  patch: Partial<Pick<Task, SeriesCopyField>> & { repeat?: TaskRepeat; plannedDate?: LocalDate },
+  today: LocalDate,
+): Promise<Task> {
+  const current = await db.tasks.get(seriesId);
+  if (!current?.repeat) throw new ValidationError('找不到這個重複任務');
+  const repeat = patch.repeat ? validateRepeat({ ...patch.repeat, exceptions: patch.repeat.exceptions ?? current.repeat.exceptions }) : current.repeat;
+  const saved = await updateTask(seriesId, { ...patch, repeat });
+  await db.transaction('rw', db.tasks, db.workBlocks, async () => {
+    const wanted = new Set(occurrenceDates(saved, today, addLocalDays(today, REPEAT_HORIZON_DAYS - 1)));
+    const instances = await db.tasks.where('seriesId').equals(seriesId).toArray();
+    for (const inst of instances) {
+      if (!inst.occurrenceDate || compareLocalDate(inst.occurrenceDate, today) < 0) continue;
+      if (inst.status !== 'todo' || inst.detached) continue;
+      if (!wanted.has(inst.occurrenceDate)) {
+        await db.tasks.delete(inst.id);
+        await db.workBlocks.where('taskId').equals(inst.id).delete();
+        continue;
+      }
+      const next: Record<string, unknown> = { ...inst, updatedAt: nowIso() };
+      for (const f of SERIES_COPY_FIELDS) {
+        if (saved[f] === undefined) delete next[f];
+        else next[f] = saved[f];
+      }
+      const parsed = TaskSchema.safeParse(clean(next));
+      if (parsed.success) await db.tasks.put(parsed.data);
+    }
+  });
+  await ensureRecurringInstances(today);
+  return saved;
+}
+
+/** 只改這一次：之後改整個系列不會再覆蓋這一天 */
+export async function updateTaskInstance(id: string, patch: Partial<Omit<Task, 'id' | 'createdAt'>>): Promise<Task> {
+  return updateTask(id, { ...patch, detached: true });
+}
+
+/** 刪這一次：記成例外，之後不會再生成；這一天的實例連排程一起刪 */
+export async function skipTaskOccurrence(instanceOrSeriesId: string, date: LocalDate): Promise<void> {
+  const inst = await db.tasks.get(instanceOrSeriesId);
+  const seriesId = inst?.seriesId ?? instanceOrSeriesId;
+  const series = await db.tasks.get(seriesId);
+  if (series?.repeat) {
+    const exceptions = [...new Set([...(series.repeat.exceptions ?? []), date])].sort();
+    await updateTask(seriesId, { repeat: { ...series.repeat, exceptions } });
+  }
+  await deleteTask(instanceId(seriesId, date));
+}
+
+/** 停掉整個系列：範本與今天起還沒做的實例一起刪；做過的留著當紀錄 */
+export async function deleteTaskSeries(seriesId: string, today: LocalDate): Promise<void> {
+  const instances = await db.tasks.where('seriesId').equals(seriesId).toArray();
+  for (const inst of instances) {
+    const future = inst.occurrenceDate ? compareLocalDate(inst.occurrenceDate, today) >= 0 : true;
+    if (inst.status === 'todo' && future) await deleteTask(inst.id);
+    else if (inst.status === 'cancelled' && inst.missed) await deleteTask(inst.id);
+  }
+  await deleteTask(seriesId);
+}
+
+export async function listTaskSeries(): Promise<Task[]> {
+  return db.tasks.filter((t) => Boolean(t.repeat)).toArray();
 }
 
 export async function updateTask(id: string, patch: Partial<Omit<Task, 'id' | 'createdAt'>>): Promise<Task> {

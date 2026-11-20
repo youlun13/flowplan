@@ -1,15 +1,16 @@
 import { useEffect, useMemo, useState } from 'react';
 import { ChevronDown, ChevronUp } from 'lucide-react';
 import { Button, Confirm, ErrorText, Field, Input, NumberInput, Segmented, Sheet, Textarea, Toggle, cx } from './ui';
-import { ENERGY_LABEL, PRIORITY_LABEL, type Energy, type Priority, type Task } from '@/db/schema';
-import { createTask, deleteTask, updateTask, ValidationError } from '@/db/repo';
-import { useTasks } from '@/hooks/useData';
+import { ENERGY_LABEL, PRIORITY_LABEL, type Energy, type Priority, type Task, type TaskRepeat } from '@/db/schema';
+import { createTask, createTaskSeries, deleteTask, deleteTaskSeries, skipTaskOccurrence, updateTask, updateTaskInstance, updateTaskSeries, ValidationError } from '@/db/repo';
+import { repeatLabel } from '@/engine/taskRepeat';
+import { useTaskSeries, useTasks } from '@/hooks/useData';
 import { useSettings } from '@/hooks/useSettings';
 import { useToast } from '@/hooks/useToast';
 import { wouldCreateCycle } from '@/engine/dependencies';
 import { calibratedMinutes, calibration } from '@/engine/stats';
 import { isOpen } from '@/lib/select';
-import { addLocalDays, localDateTimeToIso, todayLocal, toLocalDate, toLocalTime, type LocalDate } from '@/lib/time';
+import { addLocalDays, localDateTimeToIso, localWeekday, todayLocal, toLocalDate, toLocalTime, weekdayLabel, type LocalDate } from '@/lib/time';
 
 const EST_PRESETS = [15, 30, 45, 60, 90, 120];
 
@@ -22,9 +23,16 @@ export interface TaskFormProps {
   defaultDate?: LocalDate;
 }
 
+type RepeatFreq = TaskRepeat['freq'];
+type EditScope = 'one' | 'series';
+
 interface Draft {
   title: string;
   plannedDate: string;
+  repeatOn: boolean;
+  repeatFreq: RepeatFreq;
+  byWeekday: number[];
+  until: string;
   priority: Priority;
   estimatedMinutes: number;
   dueDate: string;
@@ -38,9 +46,14 @@ interface Draft {
 }
 
 function toDraft(task: Task | undefined, tz: string, defaultDate: LocalDate | undefined): Draft {
+  const seed = task?.plannedDate ?? defaultDate ?? todayLocal(tz);
   return {
     title: task?.title ?? '',
     plannedDate: task?.plannedDate ?? defaultDate ?? '',
+    repeatOn: Boolean(task?.repeat),
+    repeatFreq: task?.repeat?.freq ?? 'weekly',
+    byWeekday: task?.repeat?.byWeekday ?? [localWeekday(seed)],
+    until: task?.repeat?.until ?? '',
     priority: task?.priority ?? 'P2',
     estimatedMinutes: task?.estimatedMinutes ?? 30,
     dueDate: task?.dueAt ? toLocalDate(task.dueAt, tz) : '',
@@ -58,8 +71,14 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
   const settings = useSettings();
   const tz = settings.timeZone;
   const tasks = useTasks();
+  const seriesList = useTaskSeries();
   const toast = useToast();
-  const [draft, setDraft] = useState<Draft>(() => toDraft(task, tz, defaultDate));
+  /** 編輯重複任務的某一天：只改這一次，還是整個系列 */
+  const series = task?.repeat ? task : task?.seriesId ? seriesList.find((s) => s.id === task.seriesId) : undefined;
+  const [scope, setScope] = useState<EditScope>('one');
+  const effectiveScope: EditScope = task?.repeat ? 'series' : scope;
+  const editing = effectiveScope === 'series' && series ? series : task;
+  const [draft, setDraft] = useState<Draft>(() => toDraft(editing, tz, defaultDate));
   const [advanced, setAdvanced] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [confirmDelete, setConfirmDelete] = useState(false);
@@ -67,11 +86,18 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
 
   useEffect(() => {
     if (open) {
-      setDraft(toDraft(task, tz, defaultDate));
-      setAdvanced(Boolean(task && (task.dueAt || task.minimumOutcome || task.description || task.dependencies.length)));
+      setScope('one');
       setError(null);
     }
-  }, [open, task, tz, defaultDate]);
+  }, [open, task]);
+
+  useEffect(() => {
+    if (open) {
+      setDraft(toDraft(editing, tz, defaultDate));
+      setAdvanced(Boolean(editing && (editing.dueAt || editing.minimumOutcome || editing.description || editing.dependencies.length)));
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [open, editing?.id, effectiveScope, tz, defaultDate]);
 
   const today = todayLocal(tz);
   const set = <K extends keyof Draft>(k: K, v: Draft[K]) => setDraft((d) => ({ ...d, [k]: v }));
@@ -114,9 +140,31 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
         splittable: draft.splittable,
         dependencies: draft.dependencies,
       };
-      if (task) {
+      const repeat: TaskRepeat | undefined = draft.repeatOn
+        ? { freq: draft.repeatFreq, byWeekday: draft.repeatFreq === 'weekly' ? draft.byWeekday : undefined, until: draft.until || undefined, exceptions: series?.repeat?.exceptions ?? [] }
+        : undefined;
+      if (task && effectiveScope === 'series' && series) {
+        if (!repeat) {
+          // 關掉重複：系列停掉，這一次變成普通任務留著
+          await deleteTaskSeries(series.id, today);
+          if (task.seriesId) await updateTask(task.id, { ...payload, seriesId: undefined, occurrenceDate: undefined, detached: undefined });
+          toast.show('已停止重複');
+        } else {
+          const { dueAt: _d, dependencies: _deps, plannedDate: start, ...copy } = payload;
+          void _d;
+          void _deps;
+          await updateTaskSeries(series.id, { ...copy, repeat, plannedDate: start && start > today ? start : today }, today);
+          toast.show('已更新整個系列');
+        }
+      } else if (task && task.seriesId) {
+        await updateTaskInstance(task.id, payload);
+        toast.show('只更新了這一次');
+      } else if (task) {
         await updateTask(task.id, payload);
         toast.show('已更新任務');
+      } else if (repeat) {
+        await createTaskSeries({ ...payload, dueAt: undefined, dependencies: [], repeat }, today);
+        toast.show(`已新增重複任務（${repeatLabel(repeat)}）`);
       } else {
         await createTask(payload);
         toast.show('已新增任務');
@@ -131,22 +179,32 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
 
   async function remove() {
     if (!task) return;
-    await deleteTask(task.id);
+    if (effectiveScope === 'series' && series) {
+      await deleteTaskSeries(series.id, today);
+      toast.show('已停止這個重複任務');
+    } else if (task.seriesId && task.occurrenceDate) {
+      await skipTaskOccurrence(task.id, task.occurrenceDate);
+      toast.show('已刪除這一次');
+    } else {
+      await deleteTask(task.id);
+      toast.show('已刪除任務');
+    }
     setConfirmDelete(false);
-    toast.show('已刪除任務');
     onClose();
   }
+
+  const deleteLabel = effectiveScope === 'series' ? '停止重複' : task?.seriesId ? '刪這一次' : '刪除';
 
   return (
     <Sheet
       open={open}
       onClose={onClose}
-      title={task ? '編輯任務' : '新增任務'}
+      title={task?.repeat ? '編輯重複任務' : task ? '編輯任務' : '新增任務'}
       footer={
         <div className="flex items-center gap-2">
           {task && (
-            <Button variant="danger" onClick={() => setConfirmDelete(true)}>
-              刪除
+            <Button variant="danger" onClick={() => setConfirmDelete(true)} data-testid="task-delete">
+              {deleteLabel}
             </Button>
           )}
           <div className="flex-1" />
@@ -168,11 +226,25 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
       >
         <ErrorText>{error}</ErrorText>
 
+        {task?.seriesId && series && (
+          <Field label={`這是重複任務（${repeatLabel(series.repeat!, { withUntil: true })}）`}>
+            <Segmented
+              value={scope}
+              onChange={setScope}
+              className="w-full"
+              options={[
+                { value: 'one', label: '只改這一次' },
+                { value: 'series', label: '改整個系列' },
+              ]}
+            />
+          </Field>
+        )}
+
         <Field label="任務">
           <Input autoFocus value={draft.title} onChange={(e) => set('title', e.target.value)} placeholder="例：複習線代第 3 章" enterKeyHint="done" />
         </Field>
 
-        <Field label="哪天做">
+        <Field label={draft.repeatOn ? '從哪天開始' : '哪天做'}>
           <div className="flex gap-2">
             <Input type="date" value={draft.plannedDate} onChange={(e) => set('plannedDate', e.target.value)} className="flex-1" />
           </div>
@@ -180,7 +252,7 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
             {[
               { label: '今天', value: today },
               { label: '明天', value: addLocalDays(today, 1) },
-              { label: '不指定', value: '' },
+              ...(draft.repeatOn ? [] : [{ label: '不指定', value: '' }]),
             ].map((o) => (
               <button
                 key={o.label}
@@ -193,6 +265,50 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
             ))}
           </div>
         </Field>
+
+        {(effectiveScope === 'series' || !task) && (
+          <div className="space-y-3 rounded-xl bg-surface-2/60 p-3" data-testid="repeat-section">
+            <Toggle checked={draft.repeatOn} onChange={(v) => set('repeatOn', v)} label="重複（每天或每週固定做）" />
+            {draft.repeatOn && (
+              <>
+                <Segmented
+                  value={draft.repeatFreq}
+                  onChange={(v) => set('repeatFreq', v)}
+                  className="w-full"
+                  options={[
+                    { value: 'daily', label: '每天' },
+                    { value: 'weekly', label: '每週' },
+                  ]}
+                />
+                {draft.repeatFreq === 'weekly' && (
+                  <div className="flex gap-1.5" data-testid="repeat-weekdays">
+                    {[1, 2, 3, 4, 5, 6, 0].map((wd) => {
+                      const on = draft.byWeekday.includes(wd);
+                      return (
+                        <button
+                          key={wd}
+                          type="button"
+                          aria-pressed={on}
+                          onClick={() => set('byWeekday', on ? draft.byWeekday.filter((d) => d !== wd) : [...draft.byWeekday, wd])}
+                          className={cx('h-10 flex-1 rounded-lg text-[15px]', on ? 'bg-accent text-accent-ink' : 'bg-surface text-muted')}
+                        >
+                          {weekdayLabel(wd)}
+                        </button>
+                      );
+                    })}
+                  </div>
+                )}
+                <Field label="重複到（可留空）">
+                  <Input type="date" value={draft.until} min={draft.plannedDate || today} onChange={(e) => set('until', e.target.value)} />
+                </Field>
+                <p className="text-[13px] text-muted">
+                  {repeatLabel({ freq: draft.repeatFreq, byWeekday: draft.byWeekday, until: draft.until || undefined, exceptions: [] }, { withUntil: true })}
+                  ：每個該做的日子會自動出現在「今日」，各自打勾；當天沒做不會變成逾期。
+                </p>
+              </>
+            )}
+          </div>
+        )}
 
         <div className="grid grid-cols-2 gap-3">
           <Field label="優先級">
@@ -222,18 +338,20 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
         </div>
 
         <button type="button" onClick={() => setAdvanced((v) => !v)} className="flex w-full items-center justify-between py-1 text-sm text-muted">
-          <span>進階：截止、精力、最低成果、依賴</span>
+          <span>{draft.repeatOn ? '進階：精力、最低成果' : '進階：截止、精力、最低成果、依賴'}</span>
           {advanced ? <ChevronUp size={18} /> : <ChevronDown size={18} />}
         </button>
 
         {advanced && (
           <div className="space-y-4 rounded-xl bg-surface-2/60 p-3">
-            <Field label="截止時間" hint="真正的死線；系統用它判斷緊迫度">
-              <div className="flex gap-2">
-                <Input type="date" value={draft.dueDate} onChange={(e) => set('dueDate', e.target.value)} className="flex-1" />
-                <Input type="time" value={draft.dueTime} onChange={(e) => set('dueTime', e.target.value)} className="w-32" disabled={!draft.dueDate} />
-              </div>
-            </Field>
+            {!draft.repeatOn && (
+              <Field label="截止時間" hint="真正的死線；系統用它判斷緊迫度">
+                <div className="flex gap-2">
+                  <Input type="date" value={draft.dueDate} onChange={(e) => set('dueDate', e.target.value)} className="flex-1" />
+                  <Input type="time" value={draft.dueTime} onChange={(e) => set('dueTime', e.target.value)} className="w-32" disabled={!draft.dueDate} />
+                </div>
+              </Field>
+            )}
 
             <Field label="需要的精力">
               <Segmented
@@ -259,7 +377,7 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
               <Textarea value={draft.description} onChange={(e) => set('description', e.target.value)} rows={3} />
             </Field>
 
-            {dependencyOptions.length > 0 && (
+            {dependencyOptions.length > 0 && !draft.repeatOn && (
               <Field label="要先完成的任務">
                 <div className="max-h-44 overflow-y-auto rounded-lg border border-line bg-surface">
                   {dependencyOptions.map((t) => {
@@ -284,7 +402,15 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
         )}
       </form>
 
-      <Confirm open={confirmDelete} title="刪除這個任務？" message="刪除後無法復原。" confirmLabel="刪除" danger onConfirm={remove} onCancel={() => setConfirmDelete(false)} />
+      <Confirm
+        open={confirmDelete}
+        title={effectiveScope === 'series' ? '停止這個重複任務？' : task?.seriesId ? '刪掉這一次？' : '刪除這個任務？'}
+        message={effectiveScope === 'series' ? '之後不會再出現；已經做完的那幾天會留著。' : task?.seriesId ? '只有這一天不做，其他天照舊。' : '刪除後無法復原。'}
+        confirmLabel={deleteLabel}
+        danger
+        onConfirm={remove}
+        onCancel={() => setConfirmDelete(false)}
+      />
     </Sheet>
   );
 }
