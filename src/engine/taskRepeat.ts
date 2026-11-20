@@ -20,25 +20,37 @@ export function isInstance(t: Task): boolean {
   return Boolean(t.seriesId);
 }
 
-/** 某一天是否在規則內（不看 exceptions） */
-export function matchesRule(repeat: TaskRepeat, date: LocalDate): boolean {
+/** 某一天是否在規則內（不看 exceptions）；anchor = 系列開始日，「每幾天」從它起算 */
+export function matchesRule(repeat: TaskRepeat, date: LocalDate, anchor: LocalDate): boolean {
   if (repeat.freq === 'daily') return true;
+  if (repeat.freq === 'every_n_days') {
+    const n = repeat.intervalDays ?? 2;
+    const diff = daysBetween(anchor, date);
+    return diff >= 0 && diff % n === 0;
+  }
   const days = repeat.byWeekday ?? [];
   return days.includes(localWeekday(date));
+}
+
+function daysBetween(a: LocalDate, b: LocalDate): number {
+  const [ay, am, ad] = a.split('-').map(Number);
+  const [by, bm, bd] = b.split('-').map(Number);
+  return Math.round((Date.UTC(by, bm - 1, bd) - Date.UTC(ay, am - 1, ad)) / 86_400_000);
 }
 
 /** 系列在 [from, to]（含）之間應該出現的日期，已排除 exceptions、開始日之前、until 之後 */
 export function occurrenceDates(series: Task, from: LocalDate, to: LocalDate): LocalDate[] {
   const repeat = series.repeat;
   if (!repeat) return [];
-  const start = series.plannedDate && compareLocalDate(series.plannedDate, from) > 0 ? series.plannedDate : from;
+  const anchor = series.plannedDate ?? from;
+  const start = compareLocalDate(anchor, from) > 0 ? anchor : from;
   const end = repeat.until && compareLocalDate(repeat.until, to) < 0 ? repeat.until : to;
   const out: LocalDate[] = [];
   const skip = new Set(repeat.exceptions ?? []);
   let cursor = start;
   let guard = 0;
   while (compareLocalDate(cursor, end) <= 0 && guard++ < 400) {
-    if (matchesRule(repeat, cursor) && !skip.has(cursor)) out.push(cursor);
+    if (matchesRule(repeat, cursor, anchor) && !skip.has(cursor)) out.push(cursor);
     cursor = addLocalDays(cursor, 1);
   }
   return out;
@@ -48,6 +60,7 @@ export function occurrenceDates(series: Task, from: LocalDate, to: LocalDate): L
 export function repeatLabel(repeat: TaskRepeat, opts: { withUntil?: boolean } = {}): string {
   let base: string;
   if (repeat.freq === 'daily') base = '每天';
+  else if (repeat.freq === 'every_n_days') base = `每 ${repeat.intervalDays ?? 2} 天`;
   else {
     const days = [...(repeat.byWeekday ?? [])].sort((a, b) => a - b);
     base = days.length === 7 ? '每天' : days.length === 0 ? '每週' : `每週${days.map((d) => weekdayLabel(d)).join('')}`;

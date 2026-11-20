@@ -24,9 +24,11 @@ export type LogCategory = z.infer<typeof LogCategorySchema>;
 
 /** 任務的重複規則（存在「系列」那筆上；每一天實際出現的是獨立的任務） */
 export const TaskRepeatSchema = z.object({
-  freq: z.enum(['daily', 'weekly']),
+  freq: z.enum(['daily', 'weekly', 'every_n_days']),
   /** 每週：0 = 週日 … 6 = 週六；每天可省略 */
   byWeekday: z.array(z.number().int().min(0).max(6)).optional(),
+  /** 自訂：每幾天一次（從開始日起算） */
+  intervalDays: z.number().int().min(2).max(365).optional(),
   until: LocalDateSchema.optional(),
   /** 被「刪這一次」的日期 */
   exceptions: z.array(LocalDateSchema).default([]),

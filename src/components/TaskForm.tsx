@@ -32,6 +32,7 @@ interface Draft {
   repeatOn: boolean;
   repeatFreq: RepeatFreq;
   byWeekday: number[];
+  intervalDays: number;
   until: string;
   priority: Priority;
   estimatedMinutes: number;
@@ -53,6 +54,7 @@ function toDraft(task: Task | undefined, tz: string, defaultDate: LocalDate | un
     repeatOn: Boolean(task?.repeat),
     repeatFreq: task?.repeat?.freq ?? 'weekly',
     byWeekday: task?.repeat?.byWeekday ?? [localWeekday(seed)],
+    intervalDays: task?.repeat?.intervalDays ?? 3,
     until: task?.repeat?.until ?? '',
     priority: task?.priority ?? 'P2',
     estimatedMinutes: task?.estimatedMinutes ?? 30,
@@ -141,7 +143,13 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
         dependencies: draft.dependencies,
       };
       const repeat: TaskRepeat | undefined = draft.repeatOn
-        ? { freq: draft.repeatFreq, byWeekday: draft.repeatFreq === 'weekly' ? draft.byWeekday : undefined, until: draft.until || undefined, exceptions: series?.repeat?.exceptions ?? [] }
+        ? {
+            freq: draft.repeatFreq,
+            byWeekday: draft.repeatFreq === 'weekly' ? draft.byWeekday : undefined,
+            intervalDays: draft.repeatFreq === 'every_n_days' ? draft.intervalDays : undefined,
+            until: draft.until || undefined,
+            exceptions: series?.repeat?.exceptions ?? [],
+          }
         : undefined;
       if (task && effectiveScope === 'series' && series) {
         if (!repeat) {
@@ -278,8 +286,16 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
                   options={[
                     { value: 'daily', label: '每天' },
                     { value: 'weekly', label: '每週' },
+                    { value: 'every_n_days', label: '自訂' },
                   ]}
                 />
+                {draft.repeatFreq === 'every_n_days' && (
+                  <div className="flex items-center gap-2 text-[15px]" data-testid="repeat-interval">
+                    <span>每</span>
+                    <NumberInput min={2} max={365} value={draft.intervalDays} onChange={(n) => set('intervalDays', n)} className="w-24 text-center" />
+                    <span>天一次（從開始日起算）</span>
+                  </div>
+                )}
                 {draft.repeatFreq === 'weekly' && (
                   <div className="flex gap-1.5" data-testid="repeat-weekdays">
                     {[1, 2, 3, 4, 5, 6, 0].map((wd) => {
@@ -302,7 +318,7 @@ export function TaskForm({ open, onClose, task, defaultDate }: TaskFormProps) {
                   <Input type="date" value={draft.until} min={draft.plannedDate || today} onChange={(e) => set('until', e.target.value)} />
                 </Field>
                 <p className="text-[13px] text-muted">
-                  {repeatLabel({ freq: draft.repeatFreq, byWeekday: draft.byWeekday, until: draft.until || undefined, exceptions: [] }, { withUntil: true })}
+                  {repeatLabel({ freq: draft.repeatFreq, byWeekday: draft.byWeekday, intervalDays: draft.intervalDays, until: draft.until || undefined, exceptions: [] }, { withUntil: true })}
                   ：每個該做的日子會自動出現在「今日」，各自打勾；當天沒做不會變成逾期。
                 </p>
               </>

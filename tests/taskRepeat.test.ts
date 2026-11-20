@@ -35,11 +35,16 @@ describe('occurrenceDates / repeatLabel（純函數）', () => {
     const dates = occurrenceDates(series({ freq: 'weekly', byWeekday: [1, 3, 5], until: '2026-11-27', exceptions: ['2026-11-25'] }), TODAY, '2026-12-05');
     expect(dates).toEqual(['2026-11-20', '2026-11-23', '2026-11-27']);
   });
+  it('自訂每 3 天：從開始日起算，開始日之前不算', () => {
+    expect(occurrenceDates(series({ freq: 'every_n_days', intervalDays: 3, exceptions: [] }, '2026-11-18'), TODAY, '2026-11-30')).toEqual(['2026-11-21', '2026-11-24', '2026-11-27', '2026-11-30']);
+    expect(occurrenceDates(series({ freq: 'every_n_days', intervalDays: 2, exceptions: [] }), TODAY, '2026-11-25')).toEqual(['2026-11-20', '2026-11-22', '2026-11-24']);
+  });
   it('標籤', () => {
     expect(repeatLabel({ freq: 'daily', exceptions: [] })).toBe('每天');
     expect(repeatLabel({ freq: 'weekly', byWeekday: [5, 1, 3], exceptions: [] })).toBe('每週一三五');
     expect(repeatLabel({ freq: 'weekly', byWeekday: [0, 1, 2, 3, 4, 5, 6], exceptions: [] })).toBe('每天');
     expect(repeatLabel({ freq: 'weekly', byWeekday: [2], until: '2026-12-31', exceptions: [] }, { withUntil: true })).toBe('每週二 · 到 12/31');
+    expect(repeatLabel({ freq: 'every_n_days', intervalDays: 3, exceptions: [] })).toBe('每 3 天');
   });
 });
 
@@ -122,5 +127,9 @@ describe('重複任務（系列 → 每一天的實例）', () => {
   it('驗證：每週至少選一天、重複到不能早於開始', async () => {
     await expect(createTaskSeries({ title: 'x', repeat: { freq: 'weekly', byWeekday: [], exceptions: [] } }, TODAY)).rejects.toThrow('至少要選一天');
     await expect(createTaskSeries({ title: 'x', repeat: { freq: 'daily', until: '2026-11-01', exceptions: [] } }, TODAY)).rejects.toThrow('不能早於');
+    await expect(createTaskSeries({ title: 'x', repeat: { freq: 'every_n_days', exceptions: [] } }, TODAY)).rejects.toThrow('每幾天');
+    const s = await createTaskSeries({ title: '澆花', repeat: { freq: 'every_n_days', intervalDays: 3, exceptions: [] } }, TODAY);
+    const dates = (await db.tasks.where('seriesId').equals(s.id).toArray()).map((t) => t.occurrenceDate).sort();
+    expect(dates).toEqual(['2026-11-20', '2026-11-23', '2026-11-26', '2026-11-29', '2026-12-02']);
   });
 });

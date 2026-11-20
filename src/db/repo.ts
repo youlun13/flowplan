@@ -137,6 +137,7 @@ function validateRepeat(repeat: TaskRepeat): TaskRepeat {
   const parsed = TaskRepeatSchema.safeParse(repeat);
   if (!parsed.success) throw new ValidationError(firstIssue(parsed.error));
   if (parsed.data.freq === 'weekly' && !(parsed.data.byWeekday && parsed.data.byWeekday.length)) throw new ValidationError('每週重複至少要選一天');
+  if (parsed.data.freq === 'every_n_days' && !parsed.data.intervalDays) throw new ValidationError('請填每幾天重複一次（至少 2）');
   return { ...parsed.data, byWeekday: parsed.data.byWeekday ? [...new Set(parsed.data.byWeekday)].sort((a, b) => a - b) : undefined };
 }
 
